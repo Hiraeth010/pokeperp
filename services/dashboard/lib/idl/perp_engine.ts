@@ -413,6 +413,67 @@ export type PerpEngine = {
           "name": "usdcMint"
         },
         {
+          "name": "insuranceFund",
+          "docs": [
+            "Insurance fund metadata — tracks total_deposited / total_paid_out across closes."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "insuranceVault",
+          "docs": [
+            "Insurance vault — receives loss sweeps, source of win top-ups. Authority = insurance_fund PDA."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "indexState"
         },
         {

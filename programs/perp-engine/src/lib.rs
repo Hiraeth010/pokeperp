@@ -362,12 +362,45 @@ pub mod perp_engine {
             .ok_or(PerpError::MathOverflow)?;
         // Underwater positions should have been liquidated; reverting here protects the program.
         require!(payout_signed >= 0, PerpError::InsufficientMargin);
-        // v0.1 simplification: transfer the full margin vault balance, ignoring computed PnL.
-        // PnL realization requires interaction with the insurance vault (top-up on win,
-        // sweep remainder on loss) — out of scope for v0.1. The vault must be empty before
-        // close_account, so we transfer exactly `margin`. TODO: insurance-mediated PnL.
-        let _intended_payout = payout_signed as u64; // for the future spec-correct path
-        let payout = margin;
+        let payout = payout_signed as u64;
+
+        // PnL settlement via the insurance vault:
+        //  - pnl > 0 (trader wins): insurance tops up the margin vault by `pnl` BEFORE the
+        //    payout transfer, so the vault drains to exactly zero.
+        //  - pnl < 0 (trader loses): payout already smaller than margin; after the payout
+        //    transfer the residual |pnl| is swept from the margin vault into insurance.
+        //  - pnl == 0: no insurance interaction needed.
+        if pnl > 0 {
+            let pnl_amount = pnl as u64;
+            require!(
+                ctx.accounts.insurance_vault.amount >= pnl_amount,
+                PerpError::InsuranceBelowFloor
+            );
+            let fund_bump = ctx.accounts.insurance_fund.bump;
+            let fund_seeds: &[&[u8]] = &[
+                INSURANCE_FUND_SEED,
+                std::slice::from_ref(&fund_bump),
+            ];
+            let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.insurance_vault.to_account_info(),
+                        to: ctx.accounts.margin_vault.to_account_info(),
+                        authority: ctx.accounts.insurance_fund.to_account_info(),
+                    },
+                    fund_signer_seeds,
+                ),
+                pnl_amount,
+            )?;
+            ctx.accounts.insurance_fund.total_paid_out = ctx
+                .accounts
+                .insurance_fund
+                .total_paid_out
+                .checked_add(pnl_amount)
+                .ok_or(PerpError::MathOverflow)?;
+        }
 
         // Margin vault authority is the Position PDA — sign outbound transfers with its seeds.
         let trader_key = ctx.accounts.trader.key();
@@ -394,7 +427,30 @@ pub mod perp_engine {
             payout,
         )?;
 
-        // Reclaim margin vault rent to the trader by closing the token account.
+        // Negative-PnL sweep: residual loss in the margin vault flows to insurance.
+        if pnl < 0 {
+            let loss = (-pnl) as u64;
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.margin_vault.to_account_info(),
+                        to: ctx.accounts.insurance_vault.to_account_info(),
+                        authority: ctx.accounts.position.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                loss,
+            )?;
+            ctx.accounts.insurance_fund.total_deposited = ctx
+                .accounts
+                .insurance_fund
+                .total_deposited
+                .checked_add(loss)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+
+        // Reclaim margin vault rent to the trader by closing the (now-empty) token account.
         token::close_account(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             token::CloseAccount {
@@ -1055,6 +1111,22 @@ pub struct ClosePosition<'info> {
     pub trader_usdc_account: Box<Account<'info, TokenAccount>>,
 
     pub usdc_mint: Box<Account<'info, Mint>>,
+
+    /// Insurance fund metadata — tracks total_deposited / total_paid_out across closes.
+    #[account(
+        mut,
+        seeds = [INSURANCE_FUND_SEED],
+        bump = insurance_fund.bump,
+    )]
+    pub insurance_fund: Box<Account<'info, InsuranceFund>>,
+
+    /// Insurance vault — receives loss sweeps, source of win top-ups. Authority = insurance_fund PDA.
+    #[account(
+        mut,
+        seeds = [INSURANCE_VAULT_SEED],
+        bump,
+    )]
+    pub insurance_vault: Box<Account<'info, TokenAccount>>,
 
     #[account(
         constraint = index_state.key() == market.oracle_index_state @ PerpError::OracleStale,
