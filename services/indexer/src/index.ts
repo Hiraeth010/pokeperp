@@ -124,12 +124,10 @@ async function main(): Promise<void> {
     (info) => {
       try {
         const decoded = oracle.coder.accounts.decode("indexState", info.data);
-        const rec = {
-          ts: Date.now(),
-          ...(clean(decoded) as Record<string, unknown>),
-        };
+        const c = clean(decoded) as Record<string, unknown>;
+        const rec = { ts: Date.now(), ...c };
         appendJsonl("index.jsonl", rec);
-        process.stdout.write(`[index] day=${rec.day} value=${rec.indexValue}\n`);
+        process.stdout.write(`[index] day=${c.day} value=${c.indexValue}\n`);
       } catch (e) {
         console.error("decode IndexState failed:", e);
       }

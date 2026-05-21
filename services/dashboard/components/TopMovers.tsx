@@ -1,6 +1,11 @@
 "use client";
 
-import { useIndexState, useConstituentRegistry, constituentLabel } from "@/lib/oracle";
+import {
+  useIndexState,
+  useConstituentRegistry,
+  constituentLabel,
+  type Constituent,
+} from "@/lib/oracle";
 import { formatPct, pctChange } from "@/lib/format";
 
 export default function TopMovers({ limit = 5 }: { limit?: number }) {
@@ -38,7 +43,7 @@ interface Row {
 }
 
 function buildRows(
-  constituents: { setCode: string; collectorNumber: number; variantCode: string; basePrice: bigint }[],
+  constituents: Constituent[],
   currentPrices: bigint[] | null,
   limit: number
 ): Row[] {
