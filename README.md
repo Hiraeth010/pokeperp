@@ -1,56 +1,107 @@
 # Pokeperp
 
-A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pokemon card index.
+A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pokemon card index (PMT25) — the 25 most-traded modern-era PSA 10 graded cards by trailing 90-day eBay sold dollar volume.
 
 ## Status
 
-Pre-MVP. Design specs are stable at:
+Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow.
 
-- `methodology.md` v0.2
-- `oracle.md` v0.1
-- `perp-engine.md` v0.1
-- `inception-candidates.md` v0.1 (17/25 candidates verified)
+**Implemented**
 
-On-chain programs are scaffolded with account structs and instruction stubs that match the specs; **business logic is not implemented**.
+- **Oracle program** (13/13 instructions): config + publisher onboarding, 25-slot constituent registry with chunked rebalance updates, daily push submissions with on-chain median aggregation + provisional/final lifecycle, challenge open/resolve, emergency pause.
+- **Perp engine program** (12/12 instructions): isolated-margin positions, oracle-anchored vAMM mark price (`index × (1 + slippage_factor × imbalance)`), per-trade mark-TWAP EMA, insurance-mediated PnL settlement on close, per-position funding settlement on close + liquidate, liquidation with penalty split, auto-deleverage path, taker fees to insurance vault.
+- **Publisher binary** (`services/publisher/`): standalone Rust service. Reads the on-chain registry, computes prices via either a deterministic drift path (for localnet/staging) or the real eBay Browse source with the methodology pipeline (PSA 10 regex + qualifier rejection, English-only CJK filter, variant matching, multi-window fallback, trimmed mean), then submits a signed `PriceUpdate` to the oracle. Real merkle root over selected leaves.
+- **Dashboard** (`services/dashboard/`): Next.js 15 / App Router. Index card with PMT25 value and status, Top Movers, Market State panel, /trade with leverage slider + size input + open/close/add/withdraw actions, mark-vs-index chart, /portfolio with realized PnL list.
+- **Indexer** (`services/indexer/`): subscribes to IndexState + Market account changes and polls position closures every 5 seconds. Writes JSONL to `services/indexer/data/`; the dashboard reads via Next.js API routes.
+
+**v0.3 known gaps** (documented in code)
+
+- `modify_position` doesn't re-settle funding on size changes (snapshot stays at open).
+- `auto_deleverage` has no on-chain ranking — caller asserts the position is most profitable.
+- `liquidate` funding affects the trigger but not the cash distribution.
+- Insurance accounting nit: `open_position` taker fee bypasses `total_deposited`.
+- Taker fee split: 100% to insurance currently; spec calls for 90% protocol / 10% insurance.
+- Open/resolve challenge skip bond escrow + slashing.
+- Publisher: real eBay Browse sold-items access needs Marketplace Insights partner approval; Card-Codex aggregate fallback not yet wired (data shape doesn't fit `PriceSource`).
 
 ## Read order for new contributors
 
 1. [docs/methodology.md](docs/methodology.md) — what the index *is*, how constituents are picked, edge cases.
 2. [docs/oracle.md](docs/oracle.md) — federated publisher design, daily push cadence, dispute mechanism.
 3. [docs/perp-engine.md](docs/perp-engine.md) — oracle-anchored vAMM, margin/liquidation, funding, circuit breakers.
-4. [docs/inception-candidates.md](docs/inception-candidates.md) — verified candidate list and methodology validation against real data.
-5. `programs/oracle/src/lib.rs` and `programs/perp-engine/src/lib.rs` — instruction stubs, each with a `Spec:` comment pointing to the relevant section.
+4. [docs/publisher.md](docs/publisher.md) — off-chain publisher design.
+5. [docs/dashboard.md](docs/dashboard.md) — dashboard architecture.
+6. [docs/inception-candidates.md](docs/inception-candidates.md) — verified candidate list and methodology validation against real data.
 
 ## Repo layout
 
 ```
 pokeperp/
-├── Anchor.toml             Anchor workspace (program IDs, scripts)
+├── Anchor.toml             Anchor workspace
 ├── Cargo.toml              Rust workspace root (programs only)
 ├── docs/                   Design specs (read these first)
 ├── programs/
-│   ├── oracle/             Publisher submissions, index aggregation, challenges
-│   └── perp-engine/        Market state, positions, funding, liquidation
+│   ├── oracle/             Publisher submissions, registry, index aggregation, challenges
+│   └── perp-engine/        Market state, positions, funding, liquidation, insurance
 ├── services/
-│   ├── publisher/          Off-chain publisher binary (fetches eBay → submits PriceUpdate)
-│   └── dashboard/          Next.js trader dashboard (index / trade / portfolio)
+│   ├── publisher/          Standalone Rust publisher binary
+│   ├── indexer/            JSONL on-chain event tap (Node + tsx)
+│   └── dashboard/          Next.js 15 trader dashboard
 ├── tests/                  TypeScript integration tests
 └── migrations/             Deploy script
 ```
 
-## Build
+## Quickstart (localnet)
+
+The dev stack requires a side-installed Solana 1.18 for the validator (Solana 3.1.15's `solana-test-validator` has a Windows-only `unarchive` bug). Build with the default-PATH `cargo-build-sbf` (3.1.15) but deploy with 1.18 binaries.
 
 ```sh
+# 1. Validator (separate terminal)
+D:/solana-1.18/solana-release/bin/solana-test-validator \
+  --ledger D:/sv-118 --bind-address 127.0.0.1 --rpc-port 8899
+
+# 2. Build + deploy
 anchor build
-anchor test
+solana program deploy \
+  --keypair ~/.config/solana/id.json --url http://127.0.0.1:8899 \
+  --program-id target/deploy/oracle-keypair.json target/deploy/oracle.so
+solana program deploy \
+  --keypair ~/.config/solana/id.json --url http://127.0.0.1:8899 \
+  --program-id target/deploy/perp_engine-keypair.json target/deploy/perp_engine.so
+
+# 3. Initialize on-chain state (Config, Registry, 3 demo constituents, InsuranceFund, Market)
+cd services/dashboard
+npx tsx scripts/init-localnet.ts
+
+# 4. Seed an IndexState (register a publisher, submit, aggregate)
+npx tsx scripts/seed-index.ts
+
+# 5. Run the publisher (drift mode — synthetic prices from on-chain base prices)
+cd ../publisher
+cargo run -- --config examples/publisher.localnet.toml run --dry-run
+
+# 6. Indexer (separate terminal)
+cd ../indexer && npm run start
+
+# 7. Dashboard
+cd ../dashboard && npm run dev   # → http://localhost:3000
 ```
 
-The scaffold compiles but does not implement any business logic. Each instruction returns `Ok(())` with a TODO referencing the spec section to implement.
+A full open/modify/close trade cycle can be exercised without the UI via `services/dashboard/scripts/test-trade.ts`.
+
+## On-chain build / toolchain notes
+
+- Anchor 0.31.1, Solana CLI 3.1.15 for builds (default PATH), Solana 1.18.26 for the localnet validator and `solana program deploy`.
+- `ConstituentRegistry` and `Market` use `#[account(zero_copy)]` to stay under Solana's 4KB stack frame in `try_accounts`.
+- `set_constituents` is split into `initialize_registry` + 25× `update_constituent` + `finalize_registry_update` to stay under the 1232-byte tx data cap. A full rebalance is 27 transactions.
+- Heavy `Account<>` types are `Box<Account<>>` in any Accounts struct with multiple init accounts or large account types.
+- Anchor 0.31 quirk: `mark_twap_1h` camelCases to `markTwap1H` (capital H after digit) in the runtime decoder but local-derived IDL TypeScript files may strip underscores naively to `markTwap1h` — keep the IDL `.ts` field names matching the runtime, not the JSON literal.
 
 ## Off-chain components
 
-- **Publisher binary** (`services/publisher/`): Rust service that pulls eBay sold-listings data, applies methodology §6 trimmed-mean rule, and submits `PriceUpdate` accounts to the oracle program. Scaffolded with config loader, source trait, methodology pipeline, merkle, and submit modules — all stubbed. See [docs/publisher.md](docs/publisher.md).
-- **Trader dashboard** (`services/dashboard/`): Next.js 15 app with App Router, Tailwind, Solana wallet adapter. Pages `/`, `/trade`, `/portfolio` render with placeholder data. Anchor client setup is wired; account reads and trade tx construction are stubbed with spec references. See [docs/dashboard.md](docs/dashboard.md).
+- **Publisher binary** (`services/publisher/`): Rust + Tokio. Config switches `[sources] primary` between `"drift"` (default, on-chain base_price + ±2% day-keyed perturbation, no external HTTP) and `"ebay_browse"` (OAuth2 client_credentials, paginated `item_summary/search?filter=soldItems`, methodology pipeline, real merkle root). See [docs/publisher.md](docs/publisher.md).
+- **Trader dashboard** (`services/dashboard/`): App Router + Tailwind + Solana wallet adapter. `useTradeActions` builds Anchor methods calls for open / modify / add-margin / withdraw-margin / close. See [docs/dashboard.md](docs/dashboard.md).
+- **Indexer** (`services/indexer/`): `tsx src/index.ts`. Captures initial state on startup then streams account changes; detects position closures by diffing the previous poll's known-position set.
 
 ## License
 
