@@ -2,6 +2,12 @@
 
 A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pokemon card index (PMT25) — the 25 most-traded modern-era PSA 10 graded cards by trailing 90-day eBay sold dollar volume.
 
+![Pokeperp index page — PMT25 hero, Top Movers card grid, Market State](docs/screenshots/index.png)
+
+![Pokeperp trade page — Mark vs Index chart, underlying constituents strip, trade panel](docs/screenshots/trade.png)
+
+> Card art shown is loaded at runtime from the [pokemontcg.io](https://pokemontcg.io) CDN — none of it is bundled or checked into this repo. Pokeperp is not affiliated with Nintendo, The Pokémon Company, or PSA.
+
 ## Status
 
 Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow.
