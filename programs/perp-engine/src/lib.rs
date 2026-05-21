@@ -354,9 +354,22 @@ pub mod perp_engine {
         let entry_mark = position.entry_mark_price;
         require!(entry_mark > 0, PerpError::MathOverflow);
         let price_delta = (close_mark_price as i128) - (entry_mark as i128);
-        let pnl = (position.size as i128)
+        let price_pnl = (position.size as i128)
             .checked_mul(price_delta)
             .and_then(|x| x.checked_div(entry_mark as i128))
+            .ok_or(PerpError::MathOverflow)?;
+
+        // Per-position funding: longs paying / shorts receiving (or vice versa) at
+        // the rate accrued in the market accumulator since this position's snapshot.
+        // Folded into PnL so the existing insurance-mediated settlement below moves
+        // the cash to/from the insurance vault automatically. Spec: docs/perp-engine.md §4.
+        let funding_owed = position_funding_owed(
+            ctx.accounts.market.cumulative_funding_long,
+            position.cumulative_funding_snapshot,
+            position.size,
+        )?;
+        let pnl = price_pnl
+            .checked_sub(funding_owed)
             .ok_or(PerpError::MathOverflow)?;
 
         let margin = ctx.accounts.margin_vault.amount;
@@ -472,9 +485,9 @@ pub mod perp_engine {
         // Mark TWAPs reflect the post-close observation.
         update_mark_twaps(market, close_mark_price)?;
 
-        // TODO §4: settle accrued funding into payout before paying out.
         // TODO §9: charge close-side taker fee.
-        // TODO: also update mark TWAPs in modify_position (currently doesn't compute mark).
+        // TODO: modify_position also needs per-position funding settlement + TWAP update;
+        // current path snapshots at open and never re-settles on size changes (v0.3).
 
         Ok(())
     }
@@ -581,9 +594,22 @@ pub mod perp_engine {
 
         // PnL at liq_ref_price (signed)
         let price_delta = (liq_ref_price as i128) - (entry_mark as i128);
-        let pnl = (position_size as i128)
+        let price_pnl = (position_size as i128)
             .checked_mul(price_delta)
             .and_then(|x| x.checked_div(entry_mark as i128))
+            .ok_or(PerpError::MathOverflow)?;
+
+        // Funding can push an otherwise-solvent position under MM (a long that's
+        // been bleeding funding for hours). v0.2: only affects the trigger check —
+        // cash distribution below still works on raw `margin` and the penalty split.
+        // Spec: docs/perp-engine.md §4, §7.
+        let funding_owed = position_funding_owed(
+            ctx.accounts.market.cumulative_funding_long,
+            ctx.accounts.position.cumulative_funding_snapshot,
+            position_size,
+        )?;
+        let pnl = price_pnl
+            .checked_sub(funding_owed)
             .ok_or(PerpError::MathOverflow)?;
 
         let margin = ctx.accounts.margin_vault.amount;
@@ -958,6 +984,25 @@ fn update_mark_twaps(market: &mut Market, observation: u64) -> Result<()> {
     market.mark_twap_1h = ema_update(market.mark_twap_1h, observation, 16)?;
     market.mark_twap_5min = ema_update(market.mark_twap_5min, observation, 4)?;
     Ok(())
+}
+
+/// Compute funding owed by a position at settlement time.
+///
+/// Returns signed micro-USDC: positive = trader pays into the system; negative =
+/// trader is owed by the system. Signed `size` (positive long, negative short)
+/// folds direction into the formula — a positive funding rate (mark > index)
+/// makes longs pay and shorts receive without an explicit branch.
+///
+/// Caller is responsible for first advancing `market.cumulative_funding_long`
+/// via `settle_funding`; this just reads the accumulator.
+fn position_funding_owed(cumulative: i128, snapshot: i128, size: i64) -> Result<i128> {
+    let delta = cumulative
+        .checked_sub(snapshot)
+        .ok_or(PerpError::MathOverflow)?;
+    (size as i128)
+        .checked_mul(delta)
+        .and_then(|x| x.checked_div(1_000_000))
+        .ok_or(PerpError::MathOverflow.into())
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -1353,4 +1398,47 @@ pub struct SetPhase<'info> {
     pub market: Box<Account<'info, Market>>,
 
     pub admin: Signer<'info>,
+}
+
+#[cfg(test)]
+mod funding_tests {
+    use super::*;
+
+    const USDC: i64 = 1_000_000;
+
+    #[test]
+    fn no_accrual_means_zero_owed() {
+        assert_eq!(position_funding_owed(0, 0, 1000 * USDC).unwrap(), 0);
+        assert_eq!(position_funding_owed(500, 500, 1000 * USDC).unwrap(), 0);
+        assert_eq!(position_funding_owed(500, 500, -1000 * USDC).unwrap(), 0);
+    }
+
+    #[test]
+    fn long_pays_when_accumulator_rose_above_snapshot() {
+        // mark > index for an hour at the cap (10 bps × 100 = 1000 scaled units).
+        // 1000 USDC notional long owes 1000 USDC × 1000 / 1e6 = 1 USDC.
+        let owed = position_funding_owed(1_000, 0, 1000 * USDC).unwrap();
+        assert_eq!(owed, USDC as i128);
+    }
+
+    #[test]
+    fn short_receives_when_accumulator_rose_above_snapshot() {
+        // Same accrual, short side: signed-size flips the result.
+        let owed = position_funding_owed(1_000, 0, -1000 * USDC).unwrap();
+        assert_eq!(owed, -(USDC as i128));
+    }
+
+    #[test]
+    fn long_receives_when_accumulator_fell_below_snapshot() {
+        // mark < index → cumulative shrinks → long is owed.
+        let owed = position_funding_owed(-1_000, 0, 1000 * USDC).unwrap();
+        assert_eq!(owed, -(USDC as i128));
+    }
+
+    #[test]
+    fn proportional_to_size() {
+        let small = position_funding_owed(1_000, 0, 100 * USDC).unwrap();
+        let big = position_funding_owed(1_000, 0, 10_000 * USDC).unwrap();
+        assert_eq!(big, small * 100);
+    }
 }
