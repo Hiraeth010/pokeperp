@@ -217,6 +217,9 @@ pub mod perp_engine {
         market.long_oi = new_long_oi;
         market.short_oi = new_short_oi;
 
+        // Mark TWAPs reflect the post-trade observation.
+        update_mark_twaps(market, mark_price)?;
+
         Ok(())
     }
 
@@ -466,8 +469,12 @@ pub mod perp_engine {
         market.long_oi = new_long_oi;
         market.short_oi = new_short_oi;
 
+        // Mark TWAPs reflect the post-close observation.
+        update_mark_twaps(market, close_mark_price)?;
+
         // TODO §4: settle accrued funding into payout before paying out.
         // TODO §9: charge close-side taker fee.
+        // TODO: also update mark TWAPs in modify_position (currently doesn't compute mark).
 
         Ok(())
     }
@@ -927,6 +934,30 @@ fn compute_mark_price(
         .ok_or(PerpError::MathOverflow)?;
     require!(mark > 0, PerpError::MathOverflow);
     Ok(mark as u64)
+}
+
+/// EMA update: result = (new + (denom-1) × old) / denom. First observation
+/// (old == 0 sentinel) sets the value directly.
+fn ema_update(old: u64, new: u64, denom: u64) -> Result<u64> {
+    if old == 0 {
+        return Ok(new);
+    }
+    let updated = (new as u128)
+        .checked_add((denom - 1) as u128 * old as u128)
+        .ok_or(PerpError::MathOverflow)?
+        / denom as u128;
+    Ok(updated as u64)
+}
+
+/// Update both mark TWAPs in Market with a fresh observation.
+/// `mark_twap_1h` uses denom=16 (slow smoothing); `mark_twap_5min` uses denom=4 (fast).
+/// v0.2 simplification: fixed-alpha EMA rather than time-weighted, so no per-trade
+/// timestamp storage is needed. Good enough for funding-rate trend + liquidation
+/// reference; a future version can layer in dt-based weighting.
+fn update_mark_twaps(market: &mut Market, observation: u64) -> Result<()> {
+    market.mark_twap_1h = ema_update(market.mark_twap_1h, observation, 16)?;
+    market.mark_twap_5min = ema_update(market.mark_twap_5min, observation, 4)?;
+    Ok(())
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
