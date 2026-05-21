@@ -1,0 +1,42 @@
+# Local-validator publisher config for dev.
+# Run with: pokeperp-publisher --config services/publisher/examples/publisher.localnet.toml run
+
+[identity]
+# Forward slashes intentional (Windows accepts them and TOML strings reject `\U`).
+publisher_keypair_path = "C:/Users/Admin/.config/solana/id.json"
+publisher_pubkey = "4HFrD7pzn72rqmGwadV7AouYLiFSfuLtgL4LWMVXQpG9"
+
+[oracle]
+rpc_url = "http://127.0.0.1:8899"
+oracle_program_id = "GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i"
+commitment = "confirmed"
+
+[methodology]
+trim_top_pct = 10
+trim_bottom_pct = 10
+min_sample_size = 5
+window_days_primary = 7
+window_days_fallback = [14, 30]
+stale_decay_pct_per_day = 0.5
+
+[sources]
+# v0.2: no external sources wired up — publisher uses on-chain base_prices with
+# deterministic day-keyed drift. Real fetching is a v0.3 follow-up.
+primary = "registry_drift"
+secondary = []
+
+[schedule]
+# UTC hour/minute the daemon submits at. For dev (localnet), use --once instead.
+submit_at_utc_hour = 22
+submit_at_utc_minute = 0
+retry_max_attempts = 3
+retry_backoff_seconds = 60
+
+[observability]
+metrics_port = 9100
+log_level = "info"
+log_format = "plain"
+
+[security]
+allow_dry_run_only = false
+require_sample_count_consistency = false

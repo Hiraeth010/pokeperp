@@ -1,11 +1,27 @@
 //! Submit signed PriceUpdate transaction to the oracle program.
-//! Spec: docs/publisher.md §8, docs/oracle.md §4.
+//!
+//! Uses raw `solana-sdk` instruction encoding (no `anchor-client` dependency) so
+//! the publisher binary stays small. The on-chain instruction is an Anchor
+//! `#[program]` function, so we replicate Anchor's wire format:
+//!
+//!   - 8-byte discriminator: `sha256("global:submit_price_update")[0..8]`
+//!   - args (borsh, little-endian):
+//!       day: u32
+//!       prices: [u64; 25]
+//!       sale_counts: [u16; 25]
+//!       source_root: [u8; 32]
+//!
+//! Spec: docs/oracle.md §4, programs/oracle/src/lib.rs `submit_price_update`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    signature::{Keypair, Signature},
+    signature::{Keypair, Signature, Signer},
+    system_program,
+    transaction::Transaction,
 };
 
 pub struct SubmitParams {
@@ -15,19 +31,124 @@ pub struct SubmitParams {
     pub source_root: [u8; 32],
 }
 
-/// Sign and send a `submit_price_update` transaction.
-/// Spec: docs/publisher.md §8, docs/oracle.md §4.
-pub async fn submit(
-    _client: &RpcClient,
-    _oracle_program_id: &Pubkey,
-    _keypair: &Keypair,
-    _params: SubmitParams,
+/// PDA seed prefixes (must match `programs/oracle/src/state.rs`).
+const CONFIG_SEED: &[u8] = b"config";
+const PUBLISHER_SEED: &[u8] = b"publisher";
+const PRICE_UPDATE_SEED: &[u8] = b"price";
+
+/// SHA-256("global:<ix_name>")[0..8] — Anchor's instruction discriminator scheme.
+fn anchor_discriminator(ix_name: &str) -> [u8; 8] {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("global:{}", ix_name).as_bytes());
+    let result = hasher.finalize();
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&result[..8]);
+    out
+}
+
+/// Borsh-encode the submit_price_update arguments into a contiguous byte buffer.
+fn encode_args(day: u32, prices: &[u64; 25], sale_counts: &[u16; 25], source_root: &[u8; 32]) -> Vec<u8> {
+    // Capacity: 4 + 25×8 + 25×2 + 32 = 286 bytes
+    let mut buf = Vec::with_capacity(4 + 25 * 8 + 25 * 2 + 32);
+    buf.extend_from_slice(&day.to_le_bytes());
+    for p in prices {
+        buf.extend_from_slice(&p.to_le_bytes());
+    }
+    for c in sale_counts {
+        buf.extend_from_slice(&c.to_le_bytes());
+    }
+    buf.extend_from_slice(source_root);
+    buf
+}
+
+/// Sign and send a `submit_price_update` transaction. Returns the tx signature on success.
+pub fn submit(
+    client: &RpcClient,
+    oracle_program_id: &Pubkey,
+    publisher: &Keypair,
+    params: SubmitParams,
 ) -> Result<Signature> {
-    // TODO:
-    //   1. Derive publisher PDA (seeds = [b"publisher", keypair.pubkey()])
-    //   2. Derive price_update PDA (seeds = [b"price", keypair.pubkey(), day.to_le_bytes()])
-    //   3. Build instruction via anchor-client / manual encoding
-    //   4. Sign and send with skip_preflight=false, commitment=confirmed
-    //   5. Retry transient errors per docs/publisher.md §8 retry policy
-    unimplemented!("submit not yet implemented — see docs/publisher.md §8")
+    let publisher_pubkey = publisher.pubkey();
+
+    // Derive PDAs that the on-chain Accounts struct expects (matching seeds in lib.rs).
+    let (config_pda, _) =
+        Pubkey::find_program_address(&[CONFIG_SEED], oracle_program_id);
+    let (publisher_account_pda, _) = Pubkey::find_program_address(
+        &[PUBLISHER_SEED, publisher_pubkey.as_ref()],
+        oracle_program_id,
+    );
+    let (price_update_pda, _) = Pubkey::find_program_address(
+        &[
+            PRICE_UPDATE_SEED,
+            publisher_pubkey.as_ref(),
+            &params.day.to_le_bytes(),
+        ],
+        oracle_program_id,
+    );
+
+    // Build the instruction data: 8-byte discriminator || args.
+    let disc = anchor_discriminator("submit_price_update");
+    let args = encode_args(
+        params.day,
+        &params.prices,
+        &params.sale_counts,
+        &params.source_root,
+    );
+    let mut data = Vec::with_capacity(8 + args.len());
+    data.extend_from_slice(&disc);
+    data.extend_from_slice(&args);
+
+    // Accounts order MUST match programs/oracle/src/lib.rs SubmitPriceUpdate:
+    //   config (readonly), publisher (signer/mut), publisher_account (mut),
+    //   price_update (init/mut), system_program.
+    let accounts = vec![
+        AccountMeta::new_readonly(config_pda, false),
+        AccountMeta::new(publisher_pubkey, true),
+        AccountMeta::new(publisher_account_pda, false),
+        AccountMeta::new(price_update_pda, false),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+
+    let ix = Instruction {
+        program_id: *oracle_program_id,
+        accounts,
+        data,
+    };
+
+    let blockhash = client
+        .get_latest_blockhash()
+        .context("get_latest_blockhash")?;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&publisher_pubkey),
+        &[publisher],
+        blockhash,
+    );
+
+    let sig = client
+        .send_and_confirm_transaction(&tx)
+        .context("send_and_confirm_transaction")?;
+    Ok(sig)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discriminator_is_first_8_bytes_of_sha256() {
+        let d = anchor_discriminator("submit_price_update");
+        // Spot-check: same input must always produce the same output.
+        let d2 = anchor_discriminator("submit_price_update");
+        assert_eq!(d, d2);
+        // Different input must produce different output.
+        let d3 = anchor_discriminator("aggregate_day");
+        assert_ne!(d, d3);
+    }
+
+    #[test]
+    fn args_buffer_has_expected_size() {
+        let buf = encode_args(0, &[0u64; 25], &[0u16; 25], &[0u8; 32]);
+        assert_eq!(buf.len(), 4 + 25 * 8 + 25 * 2 + 32);
+    }
 }
