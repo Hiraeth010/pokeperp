@@ -3,14 +3,30 @@
 import {
   useIndexState,
   useConstituentRegistry,
-  constituentLabel,
   type Constituent,
 } from "@/lib/oracle";
 import { formatPct, pctChange } from "@/lib/format";
+import CardImage from "./CardImage";
+import TypeBadge, { toneForVariant } from "./TypeBadge";
+import { cardName, variantLabel } from "@/lib/cards";
 
-export default function TopMovers({ limit = 5 }: { limit?: number }) {
+interface Row {
+  c: Constituent;
+  pct: number | null;
+}
+
+export default function TopMovers({ limit = 6 }: { limit?: number }) {
   const index = useIndexState();
   const registry = useConstituentRegistry();
+
+  const rows =
+    registry.status === "ready"
+      ? buildRows(
+          registry.data.constituents,
+          index.status === "ready" ? index.data.aggregatedPrices : null,
+          limit
+        )
+      : [];
 
   return (
     <div className="tcg-card">
@@ -23,23 +39,10 @@ export default function TopMovers({ limit = 5 }: { limit?: number }) {
       <Body
         indexStatus={index.status}
         registryStatus={registry.status}
-        rows={
-          registry.status === "ready"
-            ? buildRows(
-                registry.data.constituents,
-                index.status === "ready" ? index.data.aggregatedPrices : null,
-                limit
-              )
-            : []
-        }
+        rows={rows}
       />
     </div>
   );
-}
-
-interface Row {
-  label: string;
-  pct: number | null;
 }
 
 function buildRows(
@@ -47,12 +50,11 @@ function buildRows(
   currentPrices: bigint[] | null,
   limit: number
 ): Row[] {
-  // Only show constituents whose identity has actually been written. We check setCode
-  // (non-empty) because base_price can be chain-linked into placeholder slots by aggregate_day,
-  // while a real constituent always has a non-empty set code.
-  const live = constituents.filter((c) => c.setCode !== "");
-  const rows: Row[] = live.map((c, i) => ({
-    label: constituentLabel(c),
+  const live = constituents
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => c.setCode !== "");
+  const rows: Row[] = live.map(({ c, i }) => ({
+    c,
     pct: currentPrices ? pctChange(currentPrices[i] ?? 0n, c.basePrice) : null,
   }));
   return rows
@@ -87,40 +89,57 @@ function Body({
     );
   }
   return (
-    <ul className="space-y-2.5 text-sm">
-      {rows.map((r, i) => (
-        <MoverRow key={`${r.label}-${i}`} label={r.label} pct={r.pct} />
-      ))}
+    <>
+      <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+        {rows.map((r) => (
+          <MoverTile key={`${r.c.setCode}-${r.c.collectorNumber}`} row={r} />
+        ))}
+      </ul>
       {indexStatus !== "ready" && (
-        <li className="text-[10px] text-[rgb(var(--muted))] pt-2">
-          Awaiting first oracle aggregation — change column populates once IndexState lands.
-        </li>
+        <p className="text-[10px] text-[rgb(var(--muted))] pt-3">
+          Awaiting first oracle aggregation — change populates once IndexState lands.
+        </p>
       )}
-    </ul>
+    </>
   );
 }
 
-function MoverRow({ label, pct }: { label: string; pct: number | null }) {
-  if (pct === null) {
-    return (
-      <li className="flex items-baseline justify-between">
-        <span className="text-[rgb(var(--foreground))]/85 truncate pr-3">
-          {label}
-        </span>
-        <span className="tabular text-[rgb(var(--muted))] shrink-0">—</span>
-      </li>
-    );
-  }
-  const isPositive = pct >= 0;
-  const color = isPositive ? "text-orange-400" : "text-blue-400";
+function MoverTile({ row }: { row: Row }) {
+  const { c, pct } = row;
+  const name = cardName(c);
+  const sub = name ? `${c.setCode} #${c.collectorNumber}` : variantLabel(c.variantCode);
+  const positive = pct !== null && pct >= 0;
   return (
-    <li className="flex items-baseline justify-between">
-      <span className="text-[rgb(var(--foreground))]/85 truncate pr-3">
-        {label}
-      </span>
-      <span className={`tabular ${color} font-medium shrink-0`}>
-        {formatPct(pct)}
-      </span>
+    <li className="group relative flex flex-col items-stretch gap-2.5">
+      <div className="relative mx-auto tcg-holo-strong overflow-hidden rounded-lg">
+        <CardImage card={c} size="sm" />
+      </div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold leading-tight truncate">
+            {name ?? `${c.setCode} #${c.collectorNumber}`}
+          </p>
+          <p className="text-[10px] text-[rgb(var(--muted))] truncate mt-0.5">
+            {sub}
+          </p>
+        </div>
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          {pct === null ? (
+            <span className="tabular text-[11px] text-[rgb(var(--muted))]">—</span>
+          ) : (
+            <span
+              className={`tabular text-[11.5px] font-semibold ${
+                positive ? "text-emerald-400" : "text-rose-400"
+              }`}
+            >
+              {formatPct(pct)}
+            </span>
+          )}
+          <TypeBadge tone={toneForVariant(c.variantCode)}>
+            {c.variantCode}
+          </TypeBadge>
+        </div>
+      </div>
     </li>
   );
 }

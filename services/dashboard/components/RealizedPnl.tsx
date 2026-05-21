@@ -107,9 +107,10 @@ export default function RealizedPnl({ trader }: { trader: PublicKey | null }) {
         })}
       </ul>
       <p className="text-[10px] text-[rgb(var(--muted))] pt-3 leading-snug">
-        Realized PnL column is hidden in v0.1 because close_position transfers
-        the full margin vault without PnL settlement. Once insurance-mediated
-        PnL ships, the realized P&L will appear next to each close.
+        Close mark + realized PnL columns require an indexer extension that
+        captures `close_position` tx logs (the post-image of the position
+        account is closed, so the indexer only sees the pre-close state).
+        v0.3 follow-up.
       </p>
     </div>
   );

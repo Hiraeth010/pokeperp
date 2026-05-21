@@ -1,45 +1,23 @@
 "use client";
 
-import { useIndexState } from "@/lib/oracle";
+import { useIndexState, useConstituentRegistry } from "@/lib/oracle";
 import { formatIndex } from "@/lib/format";
+import CardImage from "./CardImage";
 
 export default function IndexCard() {
   const state = useIndexState();
+  const registry = useConstituentRegistry();
+
+  // Show up to 6 thumbnails as a preview ribbon at the bottom of the hero card.
+  const previewConstituents =
+    registry.status === "ready"
+      ? registry.data.constituents.filter((c) => c.setCode !== "").slice(0, 6)
+      : [];
 
   if (state.status === "loading") {
     return (
-      <div className="tcg-card animate-pulse">
+      <div className="tcg-card animate-pulse p-8">
         <p className="text-[rgb(var(--muted))] text-sm">Loading index…</p>
-      </div>
-    );
-  }
-
-  if (state.status === "missing") {
-    return (
-      <div className="tcg-card tcg-holo p-7 sm:p-8">
-        <div className="flex items-start justify-between mb-1">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">PMT25</h1>
-            <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
-              PSA 10 Modern Top 25 · perpetual index
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-[rgb(var(--muted))]" />
-            <span className="label-caps">Pre-launch</span>
-          </div>
-        </div>
-        <div className="mt-6">
-          <span className="index-display text-5xl sm:text-6xl tabular text-[rgb(var(--muted))]">
-            —
-          </span>
-        </div>
-        <div className="mt-6 pt-5 border-t border-[rgb(var(--border-subtle))]/40">
-          <p className="text-xs text-[rgb(var(--muted))]">
-            Oracle program not yet deployed on this cluster · index activates
-            once publishers begin aggregating
-          </p>
-        </div>
       </div>
     );
   }
@@ -53,24 +31,32 @@ export default function IndexCard() {
     );
   }
 
-  const { day, status, indexValue, finalizedAt } = state.data;
+  const isReady = state.status === "ready";
+  const day = isReady ? state.data.day : null;
+  const status = isReady ? state.data.status : "Pre-launch";
+  const indexValue = isReady ? state.data.indexValue : null;
+  const finalizedAt = isReady ? state.data.finalizedAt : null;
+
   const statusColor: Record<string, string> = {
     Provisional: "rgb(var(--electric-to))",
     Final: "#10b981",
     Stale: "rgb(var(--muted))",
     Frozen: "#f87171",
+    "Pre-launch": "rgb(var(--muted))",
   };
   const updatedAgo = finalizedAt
     ? `${Math.max(0, Math.floor((Date.now() / 1000 - finalizedAt) / 60))}m ago`
     : "—";
 
   return (
-    <div className="tcg-card tcg-holo p-7 sm:p-8">
-      <div className="flex items-start justify-between mb-1">
+    <div className="tcg-card tcg-holo p-7 sm:p-9 overflow-hidden">
+      <div className="flex items-start justify-between mb-2 relative z-[1]">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">PMT25</h1>
-          <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
-            PSA 10 Modern Top 25 · day {day}
+          <h1 className="font-display text-3xl sm:text-4xl tracking-tight">
+            PMT25
+          </h1>
+          <p className="text-xs text-[rgb(var(--muted))] mt-1">
+            PSA 10 Modern Top 25 · {day !== null ? `day ${day}` : "perpetual index"}
           </p>
         </div>
         <div className="flex items-center gap-1.5">
@@ -82,18 +68,43 @@ export default function IndexCard() {
         </div>
       </div>
 
-      <div className="mt-6 flex items-baseline gap-3">
-        <span className="index-display text-5xl sm:text-6xl tabular">
-          {formatIndex(indexValue)}
-        </span>
+      <div className="mt-7 flex items-baseline gap-3 relative z-[1]">
+        {indexValue !== null ? (
+          <span className="font-display text-foil text-6xl sm:text-7xl tabular leading-none">
+            {formatIndex(indexValue)}
+          </span>
+        ) : (
+          <span className="font-display text-6xl sm:text-7xl tabular text-[rgb(var(--muted))] leading-none">
+            —
+          </span>
+        )}
+        <span className="text-[rgb(var(--muted))] text-sm tabular pl-1">USDC</span>
       </div>
 
-      <div className="mt-6 pt-5 border-t border-[rgb(var(--border-subtle))]/40 flex items-center justify-between text-xs">
+      <div className="mt-7 pt-5 border-t border-[rgb(var(--border-subtle))]/40 flex items-center justify-between text-xs relative z-[1]">
         <span className="text-[rgb(var(--muted))]">
-          Last update {updatedAgo} · {status.toLowerCase()}
+          {indexValue !== null
+            ? `Last update ${updatedAgo} · ${status.toLowerCase()}`
+            : "Oracle not yet aggregating on this cluster"}
         </span>
         <span className="label-caps text-[rgb(var(--muted))]">24h</span>
       </div>
+
+      {previewConstituents.length > 0 && (
+        <div className="mt-6 pt-5 border-t border-[rgb(var(--border-subtle))]/40 relative z-[1]">
+          <p className="label-caps mb-3 text-[10px]">Underlying preview</p>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {previewConstituents.map((c) => (
+              <CardImage
+                key={`${c.setCode}-${c.collectorNumber}`}
+                card={c}
+                size="xs"
+                className="shrink-0"
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

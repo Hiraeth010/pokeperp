@@ -129,6 +129,60 @@ body {
   animation-duration: 3.5s;
 }
 
+/* Strong holo: card art tiles, where we want the rainbow effect to be obvious. */
+.tcg-holo-strong::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.14) 38%,
+    rgba(168, 85, 247, 0.22) 46%,
+    rgba(58, 134, 255, 0.2) 52%,
+    rgba(122, 199, 76, 0.18) 58%,
+    rgba(255, 214, 10, 0.2) 64%,
+    rgba(255, 107, 53, 0.16) 70%,
+    transparent 82%
+  );
+  background-size: 220% 220%;
+  background-position: 100% 100%;
+  animation: holo-sweep 6s ease-in-out infinite;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  border-radius: inherit;
+}
+
+.tcg-holo-strong:hover::after {
+  animation-duration: 2.5s;
+}
+
+/* Foiled text: gold-to-purple-to-cyan gradient for the index display value. */
+.text-foil {
+  background: linear-gradient(
+    120deg,
+    rgb(var(--electric-to)) 0%,
+    rgb(var(--electric-from)) 20%,
+    #ffffff 45%,
+    rgb(var(--psychic-from)) 70%,
+    rgb(var(--water-from)) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: foil-shift 8s ease-in-out infinite;
+}
+
+@keyframes foil-shift {
+  0%, 100% {
+    background-position: 0% center;
+  }
+  50% {
+    background-position: 100% center;
+  }
+}
+
 /* Subtle inner glow on cards */
 .tcg-glow-fire {
   box-shadow: 0 0 40px -10px rgba(255, 107, 53, 0.15);

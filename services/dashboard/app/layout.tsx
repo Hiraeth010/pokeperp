@@ -1,7 +1,21 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Inter, Russo_One } from "next/font/google";
 import WalletProvider from "@/components/WalletProvider";
 import Nav from "@/components/Nav";
+
+const body = Inter({
+  subsets: ["latin"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+const display = Russo_One({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-display",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Pokeperp · perpetuals on PSA 10 Modern Top 25",
@@ -15,8 +29,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" className={`${body.variable} ${display.variable}`}>
+      <body className="font-sans">
         <WalletProvider>
           <Nav />
           <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>

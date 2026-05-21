@@ -1,35 +1,40 @@
 "use client";
 
-import IndexCard from "@/components/IndexCard";
+import TradeIndexBar from "@/components/TradeIndexBar";
 import TradePanel from "@/components/TradePanel";
 import MarkVsIndexChart from "@/components/MarkVsIndexChart";
+import ConstituentStrip from "@/components/ConstituentStrip";
 
 export default function TradePage() {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 space-y-6">
-        <IndexCard />
+    <div className="space-y-6">
+      <TradeIndexBar />
 
-        <div className="tcg-card h-96 flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="label-caps">Mark vs Index</h2>
-            <div className="flex items-center gap-3 text-[10px] text-[rgb(var(--muted))]">
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--electric-to))]" />
-                Mark
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--psychic-from))]" />
-                Index
-              </span>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="tcg-card h-96 flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="label-caps">Mark vs Index</h2>
+              <div className="flex items-center gap-3 text-[10px] text-[rgb(var(--muted))]">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--electric-to))]" />
+                  Mark
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--psychic-from))]" />
+                  Index
+                </span>
+              </div>
             </div>
+            <MarkVsIndexChart />
           </div>
-          <MarkVsIndexChart />
-        </div>
-      </div>
 
-      <div>
-        <TradePanel />
+          <ConstituentStrip />
+        </div>
+
+        <div>
+          <TradePanel />
+        </div>
       </div>
     </div>
   );
