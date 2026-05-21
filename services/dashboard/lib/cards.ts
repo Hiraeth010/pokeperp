@@ -57,29 +57,49 @@ const SET_CODE_TO_NAME: Record<string, string> = {
 };
 
 /** Display name for a card given (set_code, collector_number, variant_code).
- *  Returns the canonical Pokemon name if we know it; otherwise a structural label. */
+ *  Returns the canonical Pokemon name if we know it; otherwise a structural label.
+ *  Keys mirror the seed list in services/dashboard/scripts/init-localnet.ts.  */
 const CARD_NAMES: Record<string, string> = {
+  // Evolving Skies (swsh7) — Eeveelution + dragon alt arts
   "ES-215-AA": "Umbreon VMAX",
   "ES-218-AA": "Rayquaza VMAX",
   "ES-180-AA": "Espeon V",
   "ES-167-AA": "Leafeon V",
-  "ES-211-AA": "Sylveon V",
-  "ES-169-AA": "Glaceon V",
+  "ES-184-AA": "Sylveon V",
+  "ES-175-AA": "Glaceon V",
+  // Lost Origin (swsh11)
   "LO-186-AA": "Giratina V",
+  "LO-3-TG":   "Charizard (Trainer Gallery)",
+  // Silver Tempest (swsh12)
   "ST-186-AA": "Lugia V",
+  // Brilliant Stars (swsh9)
   "BS-154-AA": "Charizard V",
   "BS-174-RR": "Charizard VSTAR",
-  "CP-074-RR": "Charizard VMAX",
+  // Champion's Path (swsh35)
+  "CP-74-RR":  "Charizard VMAX",
+  // Vivid Voltage (swsh4)
   "VV-188-RR": "Pikachu VMAX",
+  // Fusion Strike (swsh8)
   "FS-251-AA": "Mew V",
   "FS-269-AA": "Mew VMAX",
   "FS-271-AA": "Gengar VMAX",
+  // Unbroken Bonds (sm10)
   "UB-217-RR": "Reshiram & Charizard GX",
+  // Unified Minds (sm11)
   "UM-242-RR": "Mewtwo & Mew GX",
-  "LO-TG03-TG": "Charizard Trainer Gallery",
-  "PMK-199-SIR": "Charizard ex",
+  // Pokemon 151 (sv3pt5)
+  "PMK-199-SIR": "Charizard ex (151)",
+  "PMK-204-SIR": "Giovanni's Charisma",
+  // Astral Radiance (swsh10)
   "AR-188-AA": "Hisuian Zoroark VSTAR",
+  // Obsidian Flames (sv3)
+  "OF-215-SIR": "Charizard ex (Obsidian Flames)",
+  // Paldean Fates (sv4pt5)
   "PaF-233-SIR": "Gardevoir ex",
+  // Paldea Evolved (sv2)
+  "PE-269-SAR": "Iono",
+  // Shining Fates Shiny Vault (swsh45sv) — naive URL doesn't resolve (SV-prefixed)
+  "SF-107-RR": "Charizard VMAX (Shiny Vault)",
 };
 
 export interface CardIdentity {
@@ -92,14 +112,29 @@ export function cardImageUrl(
   c: CardIdentity,
   variant: "thumb" | "hires" = "thumb"
 ): string | null {
+  const suffix = variant === "hires" ? "_hires.png" : ".png";
+  const variantUpper = c.variantCode.toUpperCase();
+
+  // Trainer Gallery subsets: pokemontcg.io stores TG cards under <parent>tg/
+  // with the number prefixed by "TG" and zero-padded to 2 digits.
+  if (variantUpper === "TG") {
+    const parent = SET_CODE_TO_API[c.setCode];
+    if (!parent) return null;
+    const padded = String(c.collectorNumber).padStart(2, "0");
+    return `https://images.pokemontcg.io/${parent}tg/TG${padded}${suffix}`;
+  }
+
+  // Shining Fates Shiny Vault: SV-prefixed numbering in the swsh45sv subset.
+  // The cards we treat as SF on-chain live exclusively in this subset.
+  if (c.setCode === "SF") {
+    const padded = String(c.collectorNumber).padStart(3, "0");
+    return `https://images.pokemontcg.io/swsh45sv/SV${padded}${suffix}`;
+  }
+
+  // Standard path: <set_id>/<number>.png. pokemontcg.io accepts unpadded numbers.
   const apiSet = SET_CODE_TO_API[c.setCode];
   if (!apiSet) return null;
-  // Trainer Gallery / Galarian Gallery numbers come through as "TG03" / "GG44" —
-  // already string-shaped in the on-chain registry. Numeric slots get padded only
-  // when the API expects it; pokemontcg.io accepts unpadded numbers.
-  const num = String(c.collectorNumber);
-  const suffix = variant === "hires" ? "_hires.png" : ".png";
-  return `https://images.pokemontcg.io/${apiSet}/${num}${suffix}`;
+  return `https://images.pokemontcg.io/${apiSet}/${c.collectorNumber}${suffix}`;
 }
 
 export function cardName(c: CardIdentity): string | null {

@@ -147,23 +147,75 @@ async function main(): Promise<void> {
       .rpc()
   );
 
-  // 5. Seed 3 demo constituents
-  console.log("\n[5] Seeding 3 demo constituents...");
-  const demos = [
-    { idx: 0, name: "Umbreon VMAX AA", set: "ES", num: 215, price: 1_450 },
-    { idx: 1, name: "Rayquaza VMAX AA", set: "ES", num: 218, price: 2_825 },
-    { idx: 2, name: "Giratina V AA", set: "LO", num: 186, price: 3_085 },
+  // 5. Seed all 25 PMT25 constituents from the inception candidate list
+  // (docs/inception-candidates.md). Verified prices use the 2026-05-19 multi-source
+  // pass numbers; estimates are best-effort and clearly priced lower than verified
+  // peers. Slots 23-24 use cards from sets whose pokemontcg.io URL pattern doesn't
+  // match our naive {set_id}/{number}.png template (Trainer Gallery prefixes, Shiny
+  // Vault SV-prefixed numbering) — the dashboard CardImage falls back to a textual
+  // tile for those without erroring.
+  console.log("\n[5] Seeding 25 PMT25 constituents...");
+  const seeds: Array<{
+    name: string;
+    set: string;
+    num: number;
+    variant: string;
+    total: number;
+    price: number;
+  }> = [
+    // Evolving Skies (swsh7) — Eeveelution alt arts
+    { name: "Umbreon VMAX",          set: "ES",  num: 215, variant: "AA",  total: 203, price: 1450 },
+    { name: "Rayquaza VMAX",         set: "ES",  num: 218, variant: "AA",  total: 203, price: 2825 },
+    { name: "Espeon V",              set: "ES",  num: 180, variant: "AA",  total: 203, price:  574 },
+    { name: "Leafeon V",             set: "ES",  num: 167, variant: "AA",  total: 203, price:  319 },
+    { name: "Sylveon V",             set: "ES",  num: 184, variant: "AA",  total: 203, price:  400 },
+    { name: "Glaceon V",             set: "ES",  num: 175, variant: "AA",  total: 203, price:  250 },
+    // Lost Origin (swsh11)
+    { name: "Giratina V",            set: "LO",  num: 186, variant: "AA",  total: 196, price: 3085 },
+    // Silver Tempest (swsh12)
+    { name: "Lugia V",               set: "ST",  num: 186, variant: "AA",  total: 195, price: 1593 },
+    // Brilliant Stars (swsh9)
+    { name: "Charizard V",           set: "BS",  num: 154, variant: "AA",  total: 172, price:  958 },
+    { name: "Charizard VSTAR",       set: "BS",  num: 174, variant: "RR",  total: 172, price:  229 },
+    // Champion's Path (swsh35)
+    { name: "Charizard VMAX",        set: "CP",  num:  74, variant: "RR",  total:  73, price:  394 },
+    // Vivid Voltage (swsh4)
+    { name: "Pikachu VMAX",          set: "VV",  num: 188, variant: "RR",  total: 185, price:  399 },
+    // Fusion Strike (swsh8)
+    { name: "Mew V",                 set: "FS",  num: 251, variant: "AA",  total: 264, price:  494 },
+    { name: "Mew VMAX",              set: "FS",  num: 269, variant: "AA",  total: 264, price:  592 },
+    { name: "Gengar VMAX",           set: "FS",  num: 271, variant: "AA",  total: 264, price: 2761 },
+    // Unbroken Bonds (sm10)
+    { name: "Reshiram & Charizard",  set: "UB",  num: 217, variant: "RR",  total: 214, price:  655 },
+    // Unified Minds (sm11)
+    { name: "Mewtwo & Mew",          set: "UM",  num: 242, variant: "RR",  total: 236, price: 1245 },
+    // Pokemon 151 (sv3pt5)
+    { name: "Charizard ex 151",      set: "PMK", num: 199, variant: "SIR", total: 165, price: 1781 },
+    { name: "Giovanni's Charisma",   set: "PMK", num: 204, variant: "SIR", total: 165, price:  160 },
+    // Astral Radiance (swsh10)
+    { name: "Hisuian Zoroark VSTAR", set: "AR",  num: 188, variant: "AA",  total: 189, price:  200 },
+    // Obsidian Flames (sv3)
+    { name: "Charizard ex OF",       set: "OF",  num: 215, variant: "SIR", total: 197, price:  800 },
+    // Paldean Fates (sv4pt5)
+    { name: "Gardevoir ex",          set: "PaF", num: 233, variant: "SIR", total:  91, price:  300 },
+    // Paldea Evolved (sv2)
+    { name: "Iono SAR",              set: "PE",  num: 269, variant: "SAR", total: 193, price:  200 },
+    // Lost Origin Trainer Gallery (swsh11tg) — fallback render, structural label
+    { name: "Charizard TG",          set: "LO",  num:   3, variant: "TG",  total:  30, price:  393 },
+    // Shining Fates Shiny Vault (swsh45sv) — fallback render
+    { name: "Charizard VMAX SV",     set: "SF",  num: 107, variant: "RR",  total: 122, price:  500 },
   ];
-  for (const d of demos) {
-    await safeRpc(`slot ${d.idx} = ${d.name} @ $${d.price}`, () =>
+  for (let idx = 0; idx < seeds.length; idx++) {
+    const s = seeds[idx];
+    await safeRpc(`slot ${idx} = ${s.name} (${s.set} #${s.num} ${s.variant}) @ $${s.price}`, () =>
       oracle.methods
-        .updateConstituent(d.idx, {
-          basePrice: new BN(d.price * 1_000_000),
+        .updateConstituent(idx, {
+          basePrice: new BN(s.price * 1_000_000),
           canonicalSearchHash: Array.from(Buffer.alloc(32)),
-          setCode: fixedBytes(d.set, 8),
-          variantCode: fixedBytes("AA", 8),
-          collectorNumber: d.num,
-          setTotal: 203,
+          setCode: fixedBytes(s.set, 8),
+          variantCode: fixedBytes(s.variant, 8),
+          collectorNumber: s.num,
+          setTotal: s.total,
         })
         .accounts({
           admin: wallet.publicKey,
