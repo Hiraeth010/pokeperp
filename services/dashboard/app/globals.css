@@ -1,0 +1,240 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Pokemon TCG-inspired design system, subtle execution.
+ * - Modern card aesthetic: rounded corners, thin gradient borders, holo shimmer on hero cards.
+ * - Energy-typed accents: fire = long, water = short, electric = highlights.
+ * - Trade view stays legible: no holo on actionable controls.
+ */
+
+:root {
+  /* Base palette */
+  --background: 10 10 12;
+  --background-elevated: 22 22 26;
+  --background-card: 26 26 32;
+  --foreground: 240 240 243;
+  --muted: 150 150 160;
+  --border-subtle: 58 58 74;
+
+  /* Energy-type accents */
+  --fire-from: 255 107 53;
+  --fire-to: 214 40 40;
+  --water-from: 58 134 255;
+  --water-to: 0 102 204;
+  --electric-from: 255 214 10;
+  --electric-to: 255 195 0;
+  --psychic-from: 168 85 247;
+  --psychic-to: 124 58 237;
+}
+
+html,
+body {
+  color: rgb(var(--foreground));
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-feature-settings: "tnum" on, "ss01" on;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at top, rgba(58, 134, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse 70% 50% at bottom right, rgba(255, 107, 53, 0.04) 0%, transparent 50%),
+    rgb(var(--background));
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* ========== Card frames ========== */
+/* Default neutral card: thin gradient border via mask trick. */
+.tcg-card {
+  position: relative;
+  background: rgb(var(--background-card));
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.tcg-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  padding: 1.5px;
+  background: linear-gradient(
+    140deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.03) 35%,
+    rgba(255, 255, 255, 0.02) 65%,
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.tcg-card-fire::before {
+  background: linear-gradient(140deg, rgb(var(--fire-from)) 0%, rgb(var(--fire-to)) 100%);
+  opacity: 0.55;
+}
+
+.tcg-card-water::before {
+  background: linear-gradient(140deg, rgb(var(--water-from)) 0%, rgb(var(--water-to)) 100%);
+  opacity: 0.55;
+}
+
+.tcg-card-electric::before {
+  background: linear-gradient(140deg, rgb(var(--electric-from)) 0%, rgb(var(--electric-to)) 100%);
+  opacity: 0.6;
+}
+
+/* ========== Holographic foil — reserved for the hero card only ========== */
+.tcg-holo {
+  position: relative;
+  overflow: hidden;
+}
+
+.tcg-holo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.06) 42%,
+    rgba(168, 85, 247, 0.1) 48%,
+    rgba(58, 134, 255, 0.08) 52%,
+    rgba(255, 214, 10, 0.06) 58%,
+    transparent 70%
+  );
+  background-size: 200% 200%;
+  background-position: 100% 100%;
+  animation: holo-sweep 8s ease-in-out infinite;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  border-radius: inherit;
+}
+
+@keyframes holo-sweep {
+  0%,
+  100% {
+    background-position: 110% 110%;
+  }
+  50% {
+    background-position: -10% -10%;
+  }
+}
+
+.tcg-holo:hover::after {
+  animation-duration: 3.5s;
+}
+
+/* Subtle inner glow on cards */
+.tcg-glow-fire {
+  box-shadow: 0 0 40px -10px rgba(255, 107, 53, 0.15);
+}
+.tcg-glow-water {
+  box-shadow: 0 0 40px -10px rgba(58, 134, 255, 0.15);
+}
+
+/* ========== Energy buttons ========== */
+.btn-fire {
+  background: linear-gradient(140deg, rgb(var(--fire-from)) 0%, rgb(var(--fire-to)) 100%);
+  color: white;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 2px 8px -2px rgba(214, 40, 40, 0.4);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.btn-fire:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -4px rgba(214, 40, 40, 0.5);
+}
+.btn-fire:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-water {
+  background: linear-gradient(140deg, rgb(var(--water-from)) 0%, rgb(var(--water-to)) 100%);
+  color: white;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 2px 8px -2px rgba(0, 102, 204, 0.4);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.btn-water:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -4px rgba(0, 102, 204, 0.5);
+}
+.btn-water:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-ghost {
+  background: rgb(var(--background-elevated));
+  color: rgb(var(--muted));
+  border: 1px solid rgb(var(--border-subtle));
+  font-weight: 500;
+  transition: all 0.12s ease;
+}
+.btn-ghost:hover:not(:disabled) {
+  color: rgb(var(--foreground));
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.btn-fire:disabled,
+.btn-water:disabled,
+.btn-ghost:disabled {
+  background: rgb(var(--background-elevated));
+  color: rgb(100, 100, 110);
+  box-shadow: none;
+  cursor: not-allowed;
+  border: 1px solid rgb(var(--border-subtle));
+}
+
+/* ========== Typography ========== */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.index-display {
+  font-feature-settings: "tnum" on, "lnum" on;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+
+.label-caps {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgb(var(--muted));
+}
+
+/* Override default wallet-adapter button styling to match the theme */
+.wallet-adapter-button {
+  background: rgb(var(--background-elevated)) !important;
+  border: 1px solid rgb(var(--border-subtle)) !important;
+  border-radius: 10px !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  height: 36px !important;
+  padding: 0 14px !important;
+  transition: all 0.12s ease !important;
+}
+
+.wallet-adapter-button:hover:not([disabled]) {
+  background: rgb(var(--background-card)) !important;
+  border-color: rgba(168, 85, 247, 0.4) !important;
+}
+
+.wallet-adapter-button-trigger {
+  background: linear-gradient(
+    140deg,
+    rgb(var(--electric-from)) 0%,
+    rgb(var(--electric-to)) 100%
+  ) !important;
+  color: rgb(20, 20, 24) !important;
+  font-weight: 600 !important;
+  border: none !important;
+}

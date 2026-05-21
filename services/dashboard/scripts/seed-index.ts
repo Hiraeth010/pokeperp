@@ -1,0 +1,208 @@
+/**
+ * Seed an IndexState on the local validator:
+ *   1. Register a publisher (admin = publisher = us; min_publishers=1 in Config)
+ *   2. Submit a price update for day = today - 1 (within 20:00-23:59 UTC window)
+ *   3. Aggregate that day → creates IndexState
+ *
+ * Prerequisites: init-localnet.ts has been run.
+ *
+ * Run with:
+ *   cd services/dashboard
+ *   npx tsx scripts/seed-index.ts
+ */
+
+import { AnchorProvider, Program, Wallet, BN } from "@coral-xyz/anchor";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+} from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import OracleIdl from "../lib/idl/oracle.json";
+import type { Oracle } from "../lib/idl/oracle";
+
+const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
+const WALLET_PATH =
+  process.env.WALLET_PATH ?? path.join(os.homedir(), ".config", "solana", "id.json");
+
+function loadKeypair(p: string): Keypair {
+  const secret = JSON.parse(fs.readFileSync(p, "utf-8"));
+  return Keypair.fromSecretKey(Uint8Array.from(secret));
+}
+
+async function safeRpc<T>(label: string, fn: () => Promise<T>): Promise<void> {
+  try {
+    await fn();
+    console.log(`  ✓ ${label}`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      msg.includes("already in use") ||
+      msg.includes("custom program error: 0x0") ||
+      msg.includes("DuplicateSubmission") ||
+      msg.includes("DayAlreadyAggregated")
+    ) {
+      console.log(`  - ${label} (already done)`);
+    } else {
+      throw e;
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const admin = loadKeypair(WALLET_PATH);
+  const connection = new Connection(RPC, "confirmed");
+  const provider = new AnchorProvider(connection, new Wallet(admin), {
+    commitment: "confirmed",
+  });
+  const oracle = new Program<Oracle>(OracleIdl as unknown as Oracle, provider);
+
+  // Publisher = admin (single-publisher dev setup; min_publishers=1).
+  const publisher = admin;
+  console.log(`Admin/Publisher: ${admin.publicKey.toBase58()}`);
+
+  // Read existing USDC mint from the admin's ATAs (find the one for our test mint).
+  // For dev, we know the mint matches the one created by init-localnet — fetch from token accounts.
+  console.log("\nLooking up admin's USDC ATA...");
+  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+    admin.publicKey,
+    { programId: TOKEN_PROGRAM_ID }
+  );
+  if (tokenAccounts.value.length === 0) {
+    throw new Error("No token accounts for admin — run init-localnet.ts first");
+  }
+  // Use the first non-zero token account
+  const usdcAcct = tokenAccounts.value.find(
+    (a) => Number(a.account.data.parsed.info.tokenAmount.amount) > 0
+  );
+  if (!usdcAcct) throw new Error("No funded token account found");
+  const usdcMint = new PublicKey(usdcAcct.account.data.parsed.info.mint);
+  const adminUsdcAta = usdcAcct.pubkey;
+  console.log(`  USDC mint: ${usdcMint.toBase58()}`);
+  console.log(`  Admin ATA: ${adminUsdcAta.toBase58()}`);
+
+  // [1] Register publisher
+  console.log("\n[1] Register publisher...");
+  const [configPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("config")],
+    oracle.programId
+  );
+  const [publisherPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("publisher"), publisher.publicKey.toBuffer()],
+    oracle.programId
+  );
+  const [bondVaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("bond_vault"), publisher.publicKey.toBuffer()],
+    oracle.programId
+  );
+
+  await safeRpc("register_publisher", () =>
+    oracle.methods
+      .registerPublisher(publisher.publicKey)
+      .accounts({
+        config: configPda,
+        admin: admin.publicKey,
+        publisherAccount: publisherPda,
+        adminUsdcAccount: adminUsdcAta,
+        bondVault: bondVaultPda,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      } as never)
+      .rpc()
+  );
+
+  // [2] Submit price update for day = today - 1 (within submission window)
+  const now = Math.floor(Date.now() / 1000);
+  const currentDay = Math.floor(now / 86_400);
+  const submissionDay = currentDay - 1;
+  console.log(`\n[2] Submit price update for day ${submissionDay} (current day ${currentDay})...`);
+
+  // Build a 25-entry price array. Handler requires all entries > 0.
+  // First 3 slots reflect the seeded constituents; rest get placeholder $100.
+  const prices: BN[] = Array.from({ length: 25 }, () => new BN(100_000_000));
+  prices[0] = new BN(1450_000_000); // Umbreon VMAX AA
+  prices[1] = new BN(2825_000_000); // Rayquaza VMAX AA
+  prices[2] = new BN(3085_000_000); // Giratina V AA
+
+  const saleCounts: number[] = Array.from({ length: 25 }, () => 1);
+  saleCounts[0] = 50;
+  saleCounts[1] = 50;
+  saleCounts[2] = 50;
+
+  const sourceRoot = Array.from(Buffer.alloc(32));
+
+  const [priceUpdatePda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("price"),
+      publisher.publicKey.toBuffer(),
+      new BN(submissionDay).toArrayLike(Buffer, "le", 4),
+    ],
+    oracle.programId
+  );
+
+  await safeRpc("submit_price_update", () =>
+    oracle.methods
+      .submitPriceUpdate(submissionDay, prices, saleCounts, sourceRoot)
+      .accounts({
+        config: configPda,
+        publisher: publisher.publicKey,
+        publisherAccount: publisherPda,
+        priceUpdate: priceUpdatePda,
+        systemProgram: SystemProgram.programId,
+      } as never)
+      .signers(publisher === admin ? [] : [publisher])
+      .rpc()
+  );
+
+  // [3] Aggregate day
+  console.log(`\n[3] Aggregate day ${submissionDay}...`);
+  const [registryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("registry")],
+    oracle.programId
+  );
+  const [indexStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("index_state")],
+    oracle.programId
+  );
+
+  await safeRpc("aggregate_day", () =>
+    oracle.methods
+      .aggregateDay(submissionDay)
+      .accounts({
+        config: configPda,
+        registry: registryPda,
+        indexState: indexStatePda,
+        caller: admin.publicKey,
+        systemProgram: SystemProgram.programId,
+      } as never)
+      .remainingAccounts([
+        { pubkey: priceUpdatePda, isWritable: false, isSigner: false },
+      ])
+      .rpc()
+  );
+
+  // Fetch and display final IndexState
+  console.log("\n=== Final IndexState ===");
+  const indexState = await oracle.account.indexState.fetch(indexStatePda);
+  console.log(`  Day:           ${indexState.day}`);
+  console.log(`  Status:        ${Object.keys(indexState.status as object)[0]}`);
+  console.log(`  Index value:   ${indexState.indexValue.toString()} (÷1e6 = ${Number(indexState.indexValue) / 1_000_000})`);
+  console.log(`  Finalized at:  ${new Date(indexState.finalizedAt.toNumber() * 1000).toISOString()}`);
+  console.log("\n  Per-constituent aggregated prices (first 5):");
+  for (let i = 0; i < 5; i++) {
+    const p = (indexState.aggregatedPrices as BN[])[i].toString();
+    const s = (indexState.constituentStatus as number[])[i];
+    console.log(`    slot ${i}: ${p} micro-USDC, status ${s === 0 ? "ok" : s === 1 ? "stale" : "ejected"}`);
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

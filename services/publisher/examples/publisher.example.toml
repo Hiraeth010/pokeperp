@@ -1,0 +1,43 @@
+[identity]
+publisher_keypair_path = "/etc/pokeperp/publisher.json"
+publisher_pubkey = "REPLACE_WITH_PUBKEY"
+
+[oracle]
+rpc_url = "https://api.mainnet-beta.solana.com"
+oracle_program_id = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+commitment = "confirmed"
+
+[methodology]
+trim_top_pct = 10
+trim_bottom_pct = 10
+min_sample_size = 5
+window_days_primary = 7
+window_days_fallback = [14, 30]
+stale_decay_pct_per_day = 0.5
+
+[sources]
+primary = "ebay_browse"
+secondary = ["pricecharting"]
+
+[sources.ebay_browse]
+app_id = "${EBAY_APP_ID}"
+cert_id = "${EBAY_CERT_ID}"
+rate_limit_rpm = 100
+
+[sources.pricecharting]
+api_key = "${PRICECHARTING_API_KEY}"
+
+[schedule]
+submit_at_utc_hour = 22
+submit_at_utc_minute = 0
+retry_max_attempts = 3
+retry_backoff_seconds = 300
+
+[observability]
+metrics_port = 9100
+log_level = "info"
+log_format = "json"
+
+[security]
+allow_dry_run_only = false
+require_sample_count_consistency = true

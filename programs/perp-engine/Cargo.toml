@@ -1,0 +1,24 @@
+[package]
+name = "perp-engine"
+version = "0.1.0"
+description = "Pokeperp perp engine program"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "perp_engine"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+custom-heap = []
+custom-panic = []
+cpi = ["no-entrypoint", "custom-heap", "custom-panic"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "oracle/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
+oracle = { path = "../oracle", features = ["cpi"] }
