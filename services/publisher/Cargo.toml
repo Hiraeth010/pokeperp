@@ -17,6 +17,9 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 rand = "0.8"
+regex = "1.10"
+base64 = "0.22"
+urlencoding = "2.1"
 # Pinned to 0.11 because reqwest 0.12 pulls rustls 0.22 which requires zeroize >=1.6,
 # conflicting with curve25519-dalek 3 (zeroize <1.4).
 reqwest = { version = "=0.11.27", features = ["json"], default-features = false }

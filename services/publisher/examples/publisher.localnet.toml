@@ -21,9 +21,18 @@ stale_decay_pct_per_day = 0.5
 
 [sources]
 # v0.2: no external sources wired up — publisher uses on-chain base_prices with
-# deterministic day-keyed drift. Real fetching is a v0.3 follow-up.
-primary = "registry_drift"
+# deterministic day-keyed drift. Switch to "ebay_browse" once credentials are set.
+# Legacy alias: "registry_drift" still accepted.
+primary = "drift"
 secondary = []
+
+# Uncomment to use the real eBay Browse source. Requires app_id / cert_id from
+# https://developer.ebay.com. Sold-listings access at full coverage requires
+# Marketplace Insights partner approval — without it, expect sparse results.
+# [sources.ebay_browse]
+# app_id = "${EBAY_APP_ID}"
+# cert_id = "${EBAY_CERT_ID}"
+# rate_limit_rpm = 100
 
 [schedule]
 # UTC hour/minute the daemon submits at. For dev (localnet), use --once instead.
