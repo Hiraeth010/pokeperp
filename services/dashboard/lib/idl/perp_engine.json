@@ -1906,6 +1906,21 @@
       ]
     }
   ],
+  "events": [
+    {
+      "name": "InsuranceShortfall",
+      "discriminator": [
+        79,
+        50,
+        148,
+        203,
+        189,
+        153,
+        83,
+        118
+      ]
+    }
+  ],
   "errors": [
     {
       "code": 6000,
@@ -2147,6 +2162,38 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InsuranceShortfall",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "type": "u8"
+          },
+          {
+            "name": "owed",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "shortfall",
+            "type": "u64"
           }
         ]
       }

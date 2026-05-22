@@ -1912,6 +1912,21 @@ export type PerpEngine = {
       ]
     }
   ],
+  "events": [
+    {
+      "name": "insuranceShortfall",
+      "discriminator": [
+        79,
+        50,
+        148,
+        203,
+        189,
+        153,
+        83,
+        118
+      ]
+    }
+  ],
   "errors": [
     {
       "code": 6000,
@@ -2158,6 +2173,38 @@ export type PerpEngine = {
       }
     },
     {
+      "name": "insuranceShortfall",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "trader",
+            "type": "pubkey"
+          },
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "type": "u8"
+          },
+          {
+            "name": "owed",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "shortfall",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "market",
       "docs": [
         "Perp market configuration and runtime state.",
@@ -2235,11 +2282,11 @@ export type PerpEngine = {
             "type": "i128"
           },
           {
-            "name": "markTwap1H",
+            "name": "markTwap1h",
             "type": "u64"
           },
           {
-            "name": "markTwap5Min",
+            "name": "markTwap5min",
             "type": "u64"
           },
           {

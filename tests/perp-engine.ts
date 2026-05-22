@@ -954,6 +954,32 @@ describe("perp-engine integration", () => {
     });
   });
 
+  describe("insurance shortfall fallback (v0.6)", () => {
+    // The full shortfall trigger — actually firing InsuranceShortfall — requires
+    // a winning close where pnl > insurance_vault.amount. That's hard to engineer
+    // deterministically in this harness because:
+    //   (a) the insurance vault has accumulated funds from every prior test in
+    //       this suite, and there's no admin "drain" ix to zero it out
+    //   (b) producing a $X profit on a long requires a second long to push mark
+    //       up by exactly the right amount, against the EMA-dampened mark TWAP
+    //       and the post-close imbalance calculation — sensitive to test order
+    // The Rust code path is straightforward (cap top-up at vault.amount + emit
+    // event when shortfall > 0). For now we verify the event surfaces correctly
+    // in the IDL; full integration trigger is a v0.6 follow-up that may need
+    // either a test-only admin drain ix or a refactor of the close math into
+    // a pure helper for unit testing.
+
+    it("registers InsuranceShortfall event in the program IDL", () => {
+      const events = ((perp.idl as any).events ?? []) as Array<{ name: string }>;
+      const shortfall = events.find(
+        (e) => e.name === "InsuranceShortfall" || e.name === "insuranceShortfall"
+      );
+      expect(shortfall, "InsuranceShortfall event missing from IDL").to.not.equal(
+        undefined
+      );
+    });
+  });
+
   describe("invariants", () => {
     it("insurance vault matches total_deposited − total_paid_out", async () => {
       await assertInsuranceConsistent("end-of-suite");

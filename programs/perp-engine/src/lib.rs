@@ -623,12 +623,6 @@ pub mod perp_engine {
         // Reload margin vault — treasury transfer above debited it.
         ctx.accounts.margin_vault.reload()?;
         let margin = ctx.accounts.margin_vault.amount;
-        let payout_signed = (margin as i128)
-            .checked_add(pnl)
-            .ok_or(PerpError::MathOverflow)?;
-        // Underwater positions should have been liquidated; reverting here protects the program.
-        require!(payout_signed >= 0, PerpError::InsufficientMargin);
-        let payout = payout_signed as u64;
 
         // PnL settlement via the insurance vault:
         //  - pnl > 0 (trader wins): insurance tops up the margin vault by `pnl` BEFORE the
@@ -636,37 +630,63 @@ pub mod perp_engine {
         //  - pnl < 0 (trader loses): payout already smaller than margin; after the payout
         //    transfer the residual |pnl| is swept from the margin vault into insurance.
         //  - pnl == 0: no insurance interaction needed.
+        //
+        // v0.6 self-ADL fallback: if insurance can't fully cover a winning trader's pnl,
+        // top up by what's available and haircut the trader by the deficit. An
+        // InsuranceShortfall event lets off-chain cranks know to run auto_deleverage
+        // against opposite-side positions to recapitalize the fund. Avoids the prior
+        // hard revert + manual-retry loop. `effective_pnl` carries the actually-paid
+        // pnl forward into the payout math.
+        let mut effective_pnl: i128 = pnl;
         if pnl > 0 {
             let pnl_amount = pnl as u64;
-            require!(
-                ctx.accounts.insurance_vault.amount >= pnl_amount,
-                PerpError::InsuranceBelowFloor
-            );
-            let fund_bump = ctx.accounts.insurance_fund.bump;
-            let fund_seeds: &[&[u8]] = &[
-                INSURANCE_FUND_SEED,
-                std::slice::from_ref(&fund_bump),
-            ];
-            let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.insurance_vault.to_account_info(),
-                        to: ctx.accounts.margin_vault.to_account_info(),
-                        authority: ctx.accounts.insurance_fund.to_account_info(),
-                    },
-                    fund_signer_seeds,
-                ),
-                pnl_amount,
-            )?;
-            ctx.accounts.insurance_fund.total_paid_out = ctx
-                .accounts
-                .insurance_fund
-                .total_paid_out
-                .checked_add(pnl_amount)
-                .ok_or(PerpError::MathOverflow)?;
+            let actual_topup = pnl_amount.min(ctx.accounts.insurance_vault.amount);
+            if actual_topup > 0 {
+                let fund_bump = ctx.accounts.insurance_fund.bump;
+                let fund_seeds: &[&[u8]] = &[
+                    INSURANCE_FUND_SEED,
+                    std::slice::from_ref(&fund_bump),
+                ];
+                let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.insurance_vault.to_account_info(),
+                            to: ctx.accounts.margin_vault.to_account_info(),
+                            authority: ctx.accounts.insurance_fund.to_account_info(),
+                        },
+                        fund_signer_seeds,
+                    ),
+                    actual_topup,
+                )?;
+                ctx.accounts.insurance_fund.total_paid_out = ctx
+                    .accounts
+                    .insurance_fund
+                    .total_paid_out
+                    .checked_add(actual_topup)
+                    .ok_or(PerpError::MathOverflow)?;
+            }
+            let shortfall = pnl_amount.saturating_sub(actual_topup);
+            if shortfall > 0 {
+                emit!(InsuranceShortfall {
+                    trader: ctx.accounts.trader.key(),
+                    market: ctx.accounts.market.key(),
+                    kind: 0,
+                    owed: pnl_amount,
+                    paid: actual_topup,
+                    shortfall,
+                });
+            }
+            effective_pnl = actual_topup as i128;
         }
+
+        let payout_signed = (margin as i128)
+            .checked_add(effective_pnl)
+            .ok_or(PerpError::MathOverflow)?;
+        // Underwater positions should have been liquidated; reverting here protects the program.
+        require!(payout_signed >= 0, PerpError::InsufficientMargin);
+        let payout = payout_signed as u64;
 
         // Margin vault authority is the Position PDA — sign outbound transfers with its seeds.
         let trader_key = ctx.accounts.trader.key();
@@ -915,33 +935,46 @@ pub mod perp_engine {
                     .ok_or(PerpError::MathOverflow)?;
             }
         } else if funding_owed < 0 {
+            // v0.6 self-ADL fallback: cap at insurance balance instead of reverting.
+            // Liquidatee gets haircutted by the funding shortfall; off-chain crank
+            // recapitalizes via auto_deleverage.
             let owed_to_trader = (-funding_owed) as u64;
-            require!(
-                ctx.accounts.insurance_vault.amount >= owed_to_trader,
-                PerpError::InsuranceBelowFloor
-            );
-            let fund_bump = ctx.accounts.insurance_fund.bump;
-            let fund_seeds: &[&[u8]] =
-                &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
-            let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.insurance_vault.to_account_info(),
-                        to: ctx.accounts.margin_vault.to_account_info(),
-                        authority: ctx.accounts.insurance_fund.to_account_info(),
-                    },
-                    fund_signer_seeds,
-                ),
-                owed_to_trader,
-            )?;
-            ctx.accounts.insurance_fund.total_paid_out = ctx
-                .accounts
-                .insurance_fund
-                .total_paid_out
-                .checked_add(owed_to_trader)
-                .ok_or(PerpError::MathOverflow)?;
+            let actual_topup = owed_to_trader.min(ctx.accounts.insurance_vault.amount);
+            if actual_topup > 0 {
+                let fund_bump = ctx.accounts.insurance_fund.bump;
+                let fund_seeds: &[&[u8]] =
+                    &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+                let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.insurance_vault.to_account_info(),
+                            to: ctx.accounts.margin_vault.to_account_info(),
+                            authority: ctx.accounts.insurance_fund.to_account_info(),
+                        },
+                        fund_signer_seeds,
+                    ),
+                    actual_topup,
+                )?;
+                ctx.accounts.insurance_fund.total_paid_out = ctx
+                    .accounts
+                    .insurance_fund
+                    .total_paid_out
+                    .checked_add(actual_topup)
+                    .ok_or(PerpError::MathOverflow)?;
+            }
+            let shortfall = owed_to_trader.saturating_sub(actual_topup);
+            if shortfall > 0 {
+                emit!(InsuranceShortfall {
+                    trader: ctx.accounts.trader.key(),
+                    market: ctx.accounts.market.key(),
+                    kind: 1,
+                    owed: owed_to_trader,
+                    paid: actual_topup,
+                    shortfall,
+                });
+            }
         }
         // Reload margin vault — post-funding balance feeds the penalty distribution.
         ctx.accounts.margin_vault.reload()?;
@@ -956,14 +989,61 @@ pub mod perp_engine {
         let insurance_share = total_penalty - liquidator_share;
 
         // Distribute from margin vault; payouts are bounded by what's actually in the vault.
-        // Shortfall (when margin < total_payouts owed) implicitly burned in v0.2.
-        // TODO: insurance fund draw + ADL when shortfall (perp-engine.md §7/§8).
+        // v0.6: when margin can't cover liquidator + insurance penalties, draw the
+        // liquidator-share deficit from insurance to preserve the liquidator incentive
+        // (a market with unpaid liquidators stops working). Insurance share takes
+        // what's left of margin — its own shortfall is recoverable via ADL elsewhere.
         let mut available = margin;
-        let liq_payout = liquidator_share.min(available);
+        let mut liq_payout = liquidator_share.min(available);
         available = available.saturating_sub(liq_payout);
         let ins_payout = insurance_share.min(available);
         available = available.saturating_sub(ins_payout);
         let trader_payout = available;
+
+        // Liquidator-share shortfall: back-stop from insurance vault.
+        let liq_deficit = liquidator_share.saturating_sub(liq_payout);
+        if liq_deficit > 0 {
+            let liq_topup_from_insurance =
+                liq_deficit.min(ctx.accounts.insurance_vault.amount);
+            if liq_topup_from_insurance > 0 {
+                let fund_bump = ctx.accounts.insurance_fund.bump;
+                let fund_seeds: &[&[u8]] =
+                    &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+                let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.insurance_vault.to_account_info(),
+                            to: ctx.accounts.liquidator_usdc_account.to_account_info(),
+                            authority: ctx.accounts.insurance_fund.to_account_info(),
+                        },
+                        fund_signer_seeds,
+                    ),
+                    liq_topup_from_insurance,
+                )?;
+                ctx.accounts.insurance_fund.total_paid_out = ctx
+                    .accounts
+                    .insurance_fund
+                    .total_paid_out
+                    .checked_add(liq_topup_from_insurance)
+                    .ok_or(PerpError::MathOverflow)?;
+                liq_payout = liq_payout
+                    .checked_add(liq_topup_from_insurance)
+                    .ok_or(PerpError::MathOverflow)?;
+            }
+            let remaining_deficit = liq_deficit.saturating_sub(liq_topup_from_insurance);
+            if remaining_deficit > 0 {
+                emit!(InsuranceShortfall {
+                    trader: ctx.accounts.trader.key(),
+                    market: ctx.accounts.market.key(),
+                    kind: 2,
+                    owed: liquidator_share,
+                    paid: liq_payout,
+                    shortfall: remaining_deficit,
+                });
+            }
+        }
 
         // PDA-signed transfers (position PDA is the margin vault authority)
         // Reuse the position_signer_seeds declared above for the funding-cash-flow
@@ -1285,6 +1365,28 @@ pub mod perp_engine {
 
         Ok(())
     }
+}
+
+// ---- Insurance shortfall event ----
+// Emitted when insurance can't fully cover a payout the system owes. The handler
+// pays what's available and haircuts the recipient by the deficit instead of
+// reverting (v0.6 self-ADL fallback). Off-chain crank monitors these events and
+// runs the explicit auto_deleverage ix on opposite-side positions to recapitalize
+// insurance — at which point the shortfall is socialized to the highest-PnL
+// counterparty rather than the closer/liquidatee.
+//
+// `kind` codes:
+//   0 = close_position pnl > 0 top-up shortfall (closing trader haircutted)
+//   1 = liquidate funding-owed-to-trader shortfall (liquidatee haircutted)
+//   2 = liquidate margin-can't-cover-liquidator (insurance backstops liquidator)
+#[event]
+pub struct InsuranceShortfall {
+    pub trader: Pubkey,
+    pub market: Pubkey,
+    pub kind: u8,
+    pub owed: u64,
+    pub paid: u64,
+    pub shortfall: u64,
 }
 
 /// Compute mark price from index and post-trade OI.
