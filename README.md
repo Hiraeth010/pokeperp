@@ -103,6 +103,16 @@ Audit:
 
 - `cd services/publisher && cargo run -- --config examples/publisher.localnet.toml verify --day N [--tolerance-bps M]` — re-runs day N's computation locally and compares to the on-chain submission. Drift mode is deterministic so `--tolerance-bps 0` is the correct strict check; ebay_browse should tolerate a few bps to absorb sample-window churn.
 
+Integration tests (require a fresh `--reset` validator):
+
+```sh
+ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 \
+ANCHOR_WALLET="$HOME/.config/solana/id.json" \
+npx ts-mocha -p ./tsconfig.json -t 1000000 tests/perp-engine.ts
+```
+
+Covers setup (insurance + treasury + market) → open / add_margin / withdraw_margin / modify_position / close lifecycle with realized PnL + insurance + treasury accounting invariants → liquidation scaffold (mark-pressure via 10 longs at the 500k OI cap). The liquidation trigger fires only when the EMA-smoothed mark TWAP crosses the equity-below-MM threshold — the test gracefully `this.skip()`s when it doesn't (prints the equity vs MM numbers so you know why). 12 passing + sometimes 1 pending depending on EMA convergence.
+
 ## On-chain build / toolchain notes
 
 - Anchor 0.31.1, Solana CLI 3.1.15 for builds (default PATH), Solana 1.18.26 for the localnet validator and `solana program deploy`.
