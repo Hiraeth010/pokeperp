@@ -1895,11 +1895,11 @@ export type PerpEngine = {
             "type": "i128"
           },
           {
-            "name": "markTwap1h",
+            "name": "markTwap1H",
             "type": "u64"
           },
           {
-            "name": "markTwap5min",
+            "name": "markTwap5Min",
             "type": "u64"
           },
           {

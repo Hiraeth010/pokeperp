@@ -8,6 +8,7 @@ import { formatUsdCompact } from "@/lib/format";
 import { useConstituentRegistry } from "@/lib/oracle";
 import RealizedPnl from "@/components/RealizedPnl";
 import CardImage from "@/components/CardImage";
+import FundingChart from "@/components/FundingChart";
 
 export default function PortfolioPage() {
   const { publicKey } = useWallet();
@@ -21,59 +22,61 @@ export default function PortfolioPage() {
       ? registry.data.constituents.filter((c) => c.setCode !== "").slice(0, 3)
       : [];
 
-  if (!publicKey) {
-    return (
-      <div className="tcg-card text-center py-16">
-        <p className="label-caps mb-3">Wallet required</p>
-        <p className="text-[rgb(var(--muted))]">
-          Connect a wallet to view your open positions.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <section className="tcg-card">
-        <div className="flex items-baseline justify-between mb-4">
-          <h2 className="label-caps">Open positions</h2>
-          <span className="text-[10px] text-[rgb(var(--muted))] tabular">
-            {positions.status === "ready" ? `${positions.data.length} open` : ""}
-          </span>
+      {!publicKey ? (
+        <div className="tcg-card text-center py-12">
+          <p className="label-caps mb-3">Wallet required</p>
+          <p className="text-[rgb(var(--muted))]">
+            Connect a wallet to view your open positions and close history.
+          </p>
         </div>
+      ) : (
+        <>
+          <section className="tcg-card">
+            <div className="flex items-baseline justify-between mb-4">
+              <h2 className="label-caps">Open positions</h2>
+              <span className="text-[10px] text-[rgb(var(--muted))] tabular">
+                {positions.status === "ready"
+                  ? `${positions.data.length} open`
+                  : ""}
+              </span>
+            </div>
 
-        {positions.status === "loading" && (
-          <p className="text-sm text-[rgb(var(--muted))]">Loading positions…</p>
-        )}
-        {positions.status === "error" && (
-          <p className="text-sm text-red-400">{positions.error}</p>
-        )}
-        {positions.status === "ready" && positions.data.length === 0 && (
-          <EmptyPositions />
-        )}
-        {positions.status === "ready" && positions.data.length > 0 && (
-          <ul className="space-y-3">
-            {positions.data.map((p) => (
-              <PositionCard
-                key={p.address.toBase58()}
-                position={p}
-                previewCards={previewCards}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+            {positions.status === "loading" && (
+              <p className="text-sm text-[rgb(var(--muted))]">
+                Loading positions…
+              </p>
+            )}
+            {positions.status === "error" && (
+              <p className="text-sm text-red-400">{positions.error}</p>
+            )}
+            {positions.status === "ready" && positions.data.length === 0 && (
+              <EmptyPositions />
+            )}
+            {positions.status === "ready" && positions.data.length > 0 && (
+              <ul className="space-y-3">
+                {positions.data.map((p) => (
+                  <PositionCard
+                    key={p.address.toBase58()}
+                    position={p}
+                    previewCards={previewCards}
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
 
+          <section className="tcg-card">
+            <h2 className="label-caps mb-4">Close history</h2>
+            <RealizedPnl trader={publicKey} />
+          </section>
+        </>
+      )}
+
+      {/* Market-wide funding chart — visible regardless of wallet state. */}
       <section className="tcg-card">
-        <h2 className="label-caps mb-4">Close history</h2>
-        <RealizedPnl trader={publicKey} />
-      </section>
-
-      <section className="tcg-card">
-        <h2 className="label-caps mb-4">Funding · cumulative</h2>
-        <p className="text-sm text-[rgb(var(--muted))]">
-          Needs historical snapshots · not yet wired
-        </p>
+        <FundingChart />
       </section>
     </div>
   );
