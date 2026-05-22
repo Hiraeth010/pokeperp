@@ -17,6 +17,7 @@ mod config;
 mod merkle;
 mod methodology;
 mod sources;
+mod state;
 mod submit;
 
 use anyhow::{anyhow, Context, Result};
@@ -32,6 +33,7 @@ use tracing::{info, warn};
 
 use crate::methodology::MethodologyConfig;
 use crate::sources::{ConstituentQuery, PriceSource, SoldListing, TimeWindow};
+use crate::state::{state_path_for_config, PublisherState};
 use crate::submit::SubmitParams;
 
 #[derive(Parser)]
@@ -87,15 +89,42 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load(&cli.config).with_context(|| format!("loading {}", cli.config))?;
 
+    // PublisherState lives next to publisher.toml. Tracks per-constituent
+    // last-fresh-day for the stale-decay fallback. Verify doesn't touch state
+    // (read-only path); Run + Daemon load + save around each cycle.
+    let state_path = state_path_for_config(std::path::Path::new(&cli.config));
+
     match cli.command {
-        Command::Run { dry_run, day } => run_daily(&cfg, dry_run, day).await,
-        Command::Daemon => daemon_loop(&cfg).await,
+        Command::Run { dry_run, day } => {
+            let mut state = PublisherState::load(&state_path)
+                .with_context(|| format!("loading state at {}", state_path.display()))?;
+            info!(
+                tracked_slots = state.last_fresh_day.len(),
+                "loaded publisher state"
+            );
+            let result = run_daily(&cfg, dry_run, day, &mut state).await;
+            // Persist any state mutations (fresh-day bumps) even on partial
+            // failure — slots that succeeded before the error still recorded
+            // useful progress.
+            if let Err(e) = state.save(&state_path) {
+                warn!(error = ?e, "failed to save publisher state");
+            } else {
+                info!(path = %state_path.display(), "saved publisher state");
+            }
+            result
+        }
+        Command::Daemon => daemon_loop(&cfg, &state_path).await,
         Command::Verify { day, tolerance_bps } => verify_day(&cfg, day, tolerance_bps).await,
     }
 }
 
 /// One submission cycle: read on-chain state, compute prices, submit.
-async fn run_daily(cfg: &config::Config, dry_run: bool, day_override: Option<u32>) -> Result<()> {
+async fn run_daily(
+    cfg: &config::Config,
+    dry_run: bool,
+    day_override: Option<u32>,
+    state: &mut PublisherState,
+) -> Result<()> {
     let oracle_program_id = Pubkey::from_str(&cfg.oracle.oracle_program_id)
         .context("parsing oracle.oracle_program_id")?;
     let client = RpcClient::new_with_commitment(
@@ -123,7 +152,7 @@ async fn run_daily(cfg: &config::Config, dry_run: bool, day_override: Option<u32
         // "registry_drift" is the legacy name from the v0.2 localnet config.
         "drift" | "registry_drift" => compute_drift(day, &constituents),
         "ebay_browse" => {
-            compute_from_ebay(cfg, day, &constituents)
+            compute_from_ebay(cfg, day, &constituents, state)
                 .await
                 .context("compute_from_ebay")?
         }
@@ -163,12 +192,15 @@ async fn run_daily(cfg: &config::Config, dry_run: bool, day_override: Option<u32
 }
 
 /// Daily-loop wrapper: sleep until the configured UTC hour:minute, submit, then loop.
-async fn daemon_loop(cfg: &config::Config) -> Result<()> {
+async fn daemon_loop(cfg: &config::Config, state_path: &std::path::Path) -> Result<()> {
     info!(
         hour = cfg.schedule.submit_at_utc_hour,
         minute = cfg.schedule.submit_at_utc_minute,
         "starting publisher daemon"
     );
+    // Load once at startup; persist after every cycle.
+    let mut state = PublisherState::load(state_path)
+        .with_context(|| format!("loading state at {}", state_path.display()))?;
     loop {
         let sleep_secs = seconds_until_next(
             cfg.schedule.submit_at_utc_hour,
@@ -176,9 +208,12 @@ async fn daemon_loop(cfg: &config::Config) -> Result<()> {
         );
         info!(sleep_secs, "next submission in");
         tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
-        match run_daily(cfg, false, None).await {
+        match run_daily(cfg, false, None, &mut state).await {
             Ok(()) => info!("submission ok"),
             Err(e) => warn!(error = ?e, "submission failed; will retry next cycle"),
+        }
+        if let Err(e) = state.save(state_path) {
+            warn!(error = ?e, "failed to save publisher state");
         }
     }
 }
@@ -250,10 +285,13 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
         ));
     }
 
-    // Local re-computation via the same path Run uses.
+    // Local re-computation via the same path Run uses. Verify is intentionally
+    // stateless — uses a throwaway default PublisherState so the on-disk state
+    // file isn't mutated by an audit run.
+    let mut verify_state = PublisherState::default();
     let (local_prices, local_sale_counts, local_root) = match cfg.sources.primary.as_str() {
         "drift" | "registry_drift" => compute_drift(day, &constituents),
-        "ebay_browse" => compute_from_ebay(cfg, day, &constituents)
+        "ebay_browse" => compute_from_ebay(cfg, day, &constituents, &mut verify_state)
             .await
             .context("compute_from_ebay")?,
         other => {
@@ -486,6 +524,7 @@ async fn compute_from_ebay(
     cfg: &config::Config,
     day: u32,
     constituents: &[ConstituentInfo],
+    state: &mut PublisherState,
 ) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
     let source = build_ebay_source(cfg)?;
     let methodology_cfg = MethodologyConfig {
@@ -536,6 +575,9 @@ async fn compute_from_ebay(
                 prices[i] = result.price_microusdc;
                 sale_counts[i] = result.sample_count;
                 accumulate_leaves(&mut all_leaves, i as u8, &result.leaves);
+                // Record the fresh day for this slot so future stale fallbacks
+                // can compute days_since_fresh accurately.
+                state.record_fresh(i as u8, day);
                 info!(
                     constituent = i,
                     price = result.price_microusdc,
@@ -545,13 +587,17 @@ async fn compute_from_ebay(
                 );
             }
             None => {
-                let days_since_fresh = 1; // v0.2: we don't yet track last-fresh-day per constituent
+                // Real days_since_fresh from PublisherState (v0.3.1). Defaults
+                // to 1 when no prior fresh record exists, matching the v0.2
+                // hardcoded fallback.
+                let days_since_fresh = state.days_since_fresh(i as u8, day);
                 let decayed = methodology::apply_decay(c.base_price, days_since_fresh, decay);
                 prices[i] = decayed.max(1);
                 sale_counts[i] = 1; // on-chain handler rejects zero
                 warn!(
                     constituent = i,
                     decayed_price = prices[i],
+                    days_since_fresh,
                     "stale fallback (insufficient samples)"
                 );
             }
