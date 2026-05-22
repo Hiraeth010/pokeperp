@@ -1097,14 +1097,21 @@ pub mod perp_engine {
     }
 
     /// Force-close a profitable position when the insurance fund is below floor.
-    /// Caller specifies which position to ADL (the off-chain ranking by pnl/margin is the caller's
-    /// responsibility — Solana programs can't iterate program accounts in-instruction).
     /// Spec: docs/perp-engine.md §8.
     ///
-    /// v0.1 simplifications:
-    /// - No on-chain ranking check (caller asserts the position is the most profitable)
-    /// - Closes at current index price (no mark slippage), no penalty
-    /// - Pays out margin + pnl to the ADL'd trader
+    /// Ranking is enforced via witness positions passed in `remaining_accounts`:
+    /// every witness must be on the SAME side as the candidate, belong to this
+    /// market, and have a strictly lower current PnL (computed at the same
+    /// index_price snapshot). v0.4 requires ≥ 1 witness — this gives a
+    /// probabilistic "candidate is high-ranked" guarantee, not "globally
+    /// highest". The off-chain crank picks N witnesses to make the proof
+    /// statistically convincing; v0.5 could require N ≥ K with K tied to the
+    /// total open-position count.
+    ///
+    /// v0.4 simplifications carried over from v0.1:
+    /// - Closes at current index price (no mark slippage), no penalty.
+    /// - Pays out margin + pnl to the ADL'd trader (no haircut — a v0.5
+    ///   improvement is to haircut the payout to actually restore insurance).
     pub fn auto_deleverage(ctx: Context<AutoDeleverage>) -> Result<()> {
         // Insurance below floor — entry condition for ADL
         let fund = &ctx.accounts.insurance_fund;
@@ -1131,6 +1138,52 @@ pub mod perp_engine {
             .checked_mul(price_delta)
             .and_then(|x| x.checked_div(entry_mark as i128))
             .ok_or(PerpError::MathOverflow)?;
+
+        // ----- ADL ranking: candidate.pnl ≥ every witness.pnl -----
+        // Witness positions live in remaining_accounts. Each must:
+        //   1. Be owned by this program (manual check; bypassing Anchor's
+        //      Account<> wrapper because its lifetime requirements don't play
+        //      well with remaining_accounts iteration here).
+        //   2. Pass the 8-byte Position discriminator (try_deserialize_unchecked
+        //      validates the discriminator).
+        //   3. Belong to this same market.
+        //   4. Be on the same side as the candidate (sign of size).
+        //   5. Have strictly lower current PnL at the same index_price.
+        // Reject if no witnesses are passed.
+        require!(
+            !ctx.remaining_accounts.is_empty(),
+            PerpError::ADLRankingFailed
+        );
+        let candidate_is_long = position_size > 0;
+        let market_key = ctx.accounts.market.key();
+        for witness_info in ctx.remaining_accounts.iter() {
+            require!(
+                witness_info.owner == &crate::ID,
+                PerpError::ADLRankingFailed
+            );
+            let data = witness_info
+                .try_borrow_data()
+                .map_err(|_| error!(PerpError::ADLRankingFailed))?;
+            let witness = Position::try_deserialize(&mut data.as_ref())
+                .map_err(|_| error!(PerpError::ADLRankingFailed))?;
+            require!(witness.market == market_key, PerpError::ADLRankingFailed);
+            let witness_is_long = witness.size > 0;
+            require!(
+                witness_is_long == candidate_is_long,
+                PerpError::ADLRankingFailed
+            );
+            require!(
+                witness.entry_mark_price > 0,
+                PerpError::ADLRankingFailed
+            );
+            let witness_delta =
+                (index_price as i128) - (witness.entry_mark_price as i128);
+            let witness_pnl = (witness.size as i128)
+                .checked_mul(witness_delta)
+                .and_then(|x| x.checked_div(witness.entry_mark_price as i128))
+                .ok_or(PerpError::MathOverflow)?;
+            require!(pnl >= witness_pnl, PerpError::ADLRankingFailed);
+        }
 
         let margin = ctx.accounts.margin_vault.amount;
         let payout = ((margin as i128)

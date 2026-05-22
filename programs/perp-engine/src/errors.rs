@@ -32,4 +32,6 @@ pub enum PerpError {
     MathOverflow,
     #[msg("Position size must be non-zero")]
     ZeroSize,
+    #[msg("ADL ranking proof failed: witness position has higher PnL than candidate, or no witnesses provided")]
+    ADLRankingFailed,
 }
