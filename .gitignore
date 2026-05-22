@@ -3,6 +3,10 @@ target/
 .anchor/
 test-ledger/
 
+# Solana 1.18 side-install ledger dirs — created when the validator runs with
+# `--ledger sv-118` from various subdirs. Multi-GB rocksdb state, never commit.
+**/sv-118/
+
 # Solana program upgrade authority keypairs — NEVER commit these.
 # Anyone with these can replace the deployed program with arbitrary code.
 **/*-keypair.json
