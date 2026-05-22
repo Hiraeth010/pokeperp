@@ -164,8 +164,9 @@ async function main(): Promise<void> {
   );
 
   // ----- Position polling (for close detection) -----
-  // No event emission in v0.1 so we poll for present positions; when one
-  // disappears, we record a close event with the last-seen state.
+  // No on-chain event emission in v0.2, so we poll for present positions; when
+  // one disappears, we look up its most recent transaction to derive realized
+  // PnL from pre/post token balances.
   interface PosSnap {
     pubkey: string;
     trader: string;
@@ -176,6 +177,96 @@ async function main(): Promise<void> {
     seenAt: number;
   }
   const known = new Map<string, PosSnap>();
+
+  // Read USDC mint from the Market so the close-tx parser knows which token
+  // account is the trader's USDC ATA vs. unrelated tokens that may also touch
+  // the tx (none today, but defensive).
+  let usdcMint: string | null = null;
+  try {
+    const mk = await perp.account.market.fetchNullable(MARKET_PDA);
+    if (mk) {
+      usdcMint = mk.usdcMint.toBase58();
+      console.log(`  USDC mint:    ${usdcMint}`);
+    }
+  } catch (e) {
+    console.error("read market.usdcMint failed:", e);
+  }
+
+  /** Look up the close tx for a position PDA and derive realized PnL.
+   *
+   *  Strategy: getSignaturesForAddress returns the position's tx history newest-
+   *  first; the very first signature is the close (the position account was
+   *  modified last by the close_position ix). Parse preTokenBalances /
+   *  postTokenBalances to find:
+   *    - trader USDC delta = payout (margin + pnl)
+   *    - margin vault preBalance = margin at close (vault is closed post-tx)
+   *  realized_pnl = trader_delta - margin_vault_pre. Sign falls out naturally
+   *  (winning longs gain > margin, losing positions gain < margin).
+   */
+  async function deriveCloseEconomics(
+    positionPubkey: string,
+    trader: string
+  ): Promise<{
+    closeSig: string;
+    closeSlot: number;
+    payoutMicro: string;
+    marginAtCloseMicro: string;
+    realizedPnlMicro: string;
+  } | null> {
+    if (!usdcMint) return null;
+    try {
+      const sigs = await connection.getSignaturesForAddress(
+        new PublicKey(positionPubkey),
+        { limit: 1 }
+      );
+      if (sigs.length === 0) return null;
+      const closeSig = sigs[0].signature;
+      const tx = await connection.getTransaction(closeSig, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      if (!tx || !tx.meta) return null;
+
+      const pre = tx.meta.preTokenBalances ?? [];
+      const post = tx.meta.postTokenBalances ?? [];
+
+      // Trader's USDC ATA — find the (mint, owner) match in both lists.
+      const traderPre = pre.find(
+        (b) => b.mint === usdcMint && b.owner === trader
+      );
+      const traderPost = post.find(
+        (b) => b.mint === usdcMint && b.owner === trader
+      );
+      if (!traderPre || !traderPost) return null;
+      const traderDelta =
+        BigInt(traderPost.uiTokenAmount.amount) -
+        BigInt(traderPre.uiTokenAmount.amount);
+
+      // Margin vault — owned by the position PDA, USDC mint. Only the pre side
+      // matters (the vault is closed during close_position, so it's absent
+      // from postTokenBalances).
+      const marginPre = pre.find(
+        (b) => b.mint === usdcMint && b.owner === positionPubkey
+      );
+      if (!marginPre) return null;
+      const marginAtClose = BigInt(marginPre.uiTokenAmount.amount);
+
+      const realized = traderDelta - marginAtClose;
+      return {
+        closeSig,
+        closeSlot: tx.slot,
+        payoutMicro: traderDelta.toString(),
+        marginAtCloseMicro: marginAtClose.toString(),
+        realizedPnlMicro: realized.toString(),
+      };
+    } catch (e) {
+      console.error(
+        `close-tx derive failed for ${positionPubkey.slice(0, 8)}…:`,
+        e instanceof Error ? e.message : e
+      );
+      return null;
+    }
+  }
 
   async function pollPositions(): Promise<void> {
     try {
@@ -200,19 +291,34 @@ async function main(): Promise<void> {
         }
         known.set(key, snap);
       }
-      // Detect closes
+      // Detect closes — for each one, fetch the close tx and derive realized PnL.
+      const newlyClosed: PosSnap[] = [];
       for (const [key, last] of known) {
         if (!current.has(key)) {
-          appendJsonl("closes.jsonl", {
-            ts: Date.now(),
-            kind: "close",
-            ...last,
-          });
-          process.stdout.write(
-            `[close] ${key.slice(0, 8)}… size=${last.size}\n`
-          );
+          newlyClosed.push(last);
           known.delete(key);
         }
+      }
+      for (const last of newlyClosed) {
+        const econ = await deriveCloseEconomics(last.pubkey, last.trader);
+        const rec: Record<string, unknown> = {
+          ts: Date.now(),
+          kind: "close",
+          ...last,
+        };
+        if (econ) {
+          Object.assign(rec, econ);
+          process.stdout.write(
+            `[close] ${last.pubkey.slice(0, 8)}… size=${last.size} ` +
+              `payout=${econ.payoutMicro} margin=${econ.marginAtCloseMicro} ` +
+              `pnl=${econ.realizedPnlMicro}\n`
+          );
+        } else {
+          process.stdout.write(
+            `[close] ${last.pubkey.slice(0, 8)}… size=${last.size} (econ unavailable)\n`
+          );
+        }
+        appendJsonl("closes.jsonl", rec);
       }
     } catch (e) {
       console.error("position poll failed:", e);

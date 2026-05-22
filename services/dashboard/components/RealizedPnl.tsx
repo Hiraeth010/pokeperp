@@ -11,6 +11,12 @@ interface CloseEvent {
   entryIndexPrice: string;
   entryMarkPrice: string;
   openedAt: string;
+  // v0.3: indexer parses the close tx and emits these.
+  closeSig?: string;
+  closeSlot?: number;
+  payoutMicro?: string;
+  marginAtCloseMicro?: string;
+  realizedPnlMicro?: string;
 }
 
 const E6 = 1_000_000;
@@ -71,47 +77,71 @@ export default function RealizedPnl({ trader }: { trader: PublicKey | null }) {
   }
 
   return (
-    <div>
-      <ul className="divide-y divide-[rgb(var(--border-subtle))]/40">
-        {events.map((e) => {
-          const sizeRaw = BigInt(e.size);
-          const isLong = sizeRaw > 0n;
-          const abs = isLong ? sizeRaw : -sizeRaw;
-          const side = isLong ? "long" : "short";
-          const sideColor = isLong ? "text-orange-400" : "text-blue-400";
-          const openedDate = new Date(Number(e.openedAt) * 1000);
-          const closedDate = new Date(e.ts);
-          const heldMinutes = Math.max(
-            0,
-            Math.floor((closedDate.getTime() - openedDate.getTime()) / 60_000)
-          );
-          return (
-            <li
-              key={e.pubkey}
-              className="py-2.5 text-sm flex items-baseline justify-between gap-2"
-            >
-              <div className="flex items-baseline gap-2 min-w-0">
-                <span className={`label-caps ${sideColor}`}>{side}</span>
-                <span className="tabular text-[rgb(var(--foreground))]/85 shrink-0">
-                  ${(Number(abs) / E6).toFixed(2)}
+    <ul className="divide-y divide-[rgb(var(--border-subtle))]/40">
+      {events.map((e) => {
+        const sizeRaw = BigInt(e.size);
+        const isLong = sizeRaw > 0n;
+        const abs = isLong ? sizeRaw : -sizeRaw;
+        const side = isLong ? "long" : "short";
+        const sideColor = isLong ? "text-orange-400" : "text-blue-400";
+        const openedDate = new Date(Number(e.openedAt) * 1000);
+        const closedDate = new Date(e.ts);
+        const heldMinutes = Math.max(
+          0,
+          Math.floor((closedDate.getTime() - openedDate.getTime()) / 60_000)
+        );
+        const pnlMicro = e.realizedPnlMicro
+          ? BigInt(e.realizedPnlMicro)
+          : null;
+        const pnlUsd =
+          pnlMicro !== null ? Number(pnlMicro) / E6 : null;
+        const pnlPositive = pnlMicro !== null && pnlMicro > 0n;
+        const pnlNegative = pnlMicro !== null && pnlMicro < 0n;
+        return (
+          <li
+            key={e.pubkey}
+            className="py-2.5 text-sm flex items-baseline justify-between gap-3"
+          >
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className={`label-caps ${sideColor}`}>{side}</span>
+              <span className="tabular text-[rgb(var(--foreground))]/85 shrink-0">
+                ${(Number(abs) / E6).toFixed(2)}
+              </span>
+              <span className="text-[10px] text-[rgb(var(--muted))] tabular truncate">
+                held {heldMinutes}m
+              </span>
+            </div>
+            <div className="flex items-baseline gap-3 shrink-0">
+              {pnlUsd !== null ? (
+                <span
+                  className={`tabular text-sm font-semibold ${
+                    pnlPositive
+                      ? "text-emerald-400"
+                      : pnlNegative
+                        ? "text-rose-400"
+                        : "text-[rgb(var(--muted))]"
+                  }`}
+                  title={
+                    e.payoutMicro && e.marginAtCloseMicro
+                      ? `payout $${(Number(BigInt(e.payoutMicro)) / E6).toFixed(2)} − margin $${(Number(BigInt(e.marginAtCloseMicro)) / E6).toFixed(2)}`
+                      : undefined
+                  }
+                >
+                  {pnlPositive ? "+" : ""}
+                  {pnlUsd.toFixed(2)}
                 </span>
-                <span className="text-[10px] text-[rgb(var(--muted))] tabular truncate">
-                  held {heldMinutes}m
+              ) : (
+                <span className="text-[10px] text-[rgb(var(--muted))] tabular">
+                  pnl —
                 </span>
-              </div>
+              )}
               <div className="text-[10px] text-[rgb(var(--muted))] tabular shrink-0">
                 {closedDate.toLocaleTimeString()}
               </div>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="text-[10px] text-[rgb(var(--muted))] pt-3 leading-snug">
-        Close mark + realized PnL columns require an indexer extension that
-        captures `close_position` tx logs (the post-image of the position
-        account is closed, so the indexer only sees the pre-close state).
-        v0.3 follow-up.
-      </p>
-    </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

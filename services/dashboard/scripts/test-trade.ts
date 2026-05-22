@@ -175,6 +175,14 @@ async function main(): Promise<void> {
     .uiAmount;
   console.log(`  Margin vault:    $${vaultBal}\n`);
 
+  // Pause so a slow indexer (5s position-poll cadence) gets a chance to record
+  // the position as open before we close it — necessary for the realized-PnL
+  // capture path to fire. Set `FAST_CLOSE=1` to skip.
+  if (!process.env.FAST_CLOSE) {
+    console.log("  (pausing 7s for indexer to register open)");
+    await new Promise((r) => setTimeout(r, 7000));
+  }
+
   // ===== 4. Close position =====
   console.log("[4] close_position...");
   const closeSig = await perp.methods
