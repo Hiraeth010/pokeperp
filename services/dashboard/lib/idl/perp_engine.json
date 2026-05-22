@@ -128,14 +128,21 @@
       "name": "auto_deleverage",
       "docs": [
         "Force-close a profitable position when the insurance fund is below floor.",
-        "Caller specifies which position to ADL (the off-chain ranking by pnl/margin is the caller's",
-        "responsibility — Solana programs can't iterate program accounts in-instruction).",
         "Spec: docs/perp-engine.md §8.",
         "",
-        "v0.1 simplifications:",
-        "- No on-chain ranking check (caller asserts the position is the most profitable)",
-        "- Closes at current index price (no mark slippage), no penalty",
-        "- Pays out margin + pnl to the ADL'd trader"
+        "Ranking is enforced via witness positions passed in `remaining_accounts`:",
+        "every witness must be on the SAME side as the candidate, belong to this",
+        "market, and have a strictly lower current PnL (computed at the same",
+        "index_price snapshot). v0.4 requires ≥ 1 witness — this gives a",
+        "probabilistic \"candidate is high-ranked\" guarantee, not \"globally",
+        "highest\". The off-chain crank picks N witnesses to make the proof",
+        "statistically convincing; v0.5 could require N ≥ K with K tied to the",
+        "total open-position count.",
+        "",
+        "v0.4 simplifications carried over from v0.1:",
+        "- Closes at current index price (no mark slippage), no penalty.",
+        "- Pays out margin + pnl to the ADL'd trader (no haircut — a v0.5",
+        "improvement is to haircut the payout to actually restore insurance)."
       ],
       "discriminator": [
         210,
@@ -1974,6 +1981,11 @@
       "code": 6014,
       "name": "ZeroSize",
       "msg": "Position size must be non-zero"
+    },
+    {
+      "code": 6015,
+      "name": "ADLRankingFailed",
+      "msg": "ADL ranking proof failed: witness position has higher PnL than candidate, or no witnesses provided"
     }
   ],
   "types": [
