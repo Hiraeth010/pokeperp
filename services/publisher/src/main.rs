@@ -58,6 +58,21 @@ enum Command {
     },
     /// Run on a daily schedule (sleep until submit_at_utc_hour:minute, then submit, then loop).
     Daemon,
+    /// Re-run a day's price computation locally and compare to the on-chain
+    /// PriceUpdate already submitted by this publisher. Reports per-slot deviation
+    /// (basis points) and source-root match. Non-zero exit on any disagreement.
+    /// Use this for post-hoc audit after a challenge or to gate a publisher upgrade.
+    Verify {
+        /// Day to verify. PriceUpdate at PDA seeds [b"price", publisher_pubkey, day_le]
+        /// must already exist on-chain.
+        #[arg(long)]
+        day: u32,
+        /// Allowed per-slot deviation in basis points before the verify is treated
+        /// as failed. Drift mode should produce zero deviation; eBay mode tolerates
+        /// some noise from non-deterministic API responses across runs.
+        #[arg(long, default_value_t = 0)]
+        tolerance_bps: u32,
+    },
 }
 
 #[tokio::main]
@@ -75,6 +90,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Run { dry_run, day } => run_daily(&cfg, dry_run, day).await,
         Command::Daemon => daemon_loop(&cfg).await,
+        Command::Verify { day, tolerance_bps } => verify_day(&cfg, day, tolerance_bps).await,
     }
 }
 
@@ -165,6 +181,226 @@ async fn daemon_loop(cfg: &config::Config) -> Result<()> {
             Err(e) => warn!(error = ?e, "submission failed; will retry next cycle"),
         }
     }
+}
+
+/// Re-run a day's price computation locally and compare to the on-chain submission.
+///
+/// Steps:
+///   1. Read the existing PriceUpdate at PDA seeds=[b"price", publisher_pubkey, day_le].
+///      This is the artifact the publisher submitted earlier; we re-derive it here.
+///   2. Locally re-compute prices via the same `[sources] primary` path used by Run.
+///   3. Compare per-slot prices (basis-point deviation), sale counts, and the
+///      source merkle root.
+///   4. Exit non-zero if any slot exceeds `tolerance_bps` OR the root mismatches.
+///
+/// In drift mode the computation is deterministic — zero tolerance is correct. In
+/// ebay_browse mode the same eBay API hit run a day later may return slightly
+/// different aggregates (a sale rolled out of the window, new sales in); allow a
+/// few basis points there via `--tolerance-bps`.
+async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Result<()> {
+    let oracle_program_id = Pubkey::from_str(&cfg.oracle.oracle_program_id)
+        .context("parsing oracle.oracle_program_id")?;
+    let client = RpcClient::new_with_commitment(
+        cfg.oracle.rpc_url.clone(),
+        CommitmentConfig::confirmed(),
+    );
+
+    let keypair = read_keypair_file(&cfg.identity.publisher_keypair_path)
+        .map_err(|e| anyhow!("read keypair {}: {}", cfg.identity.publisher_keypair_path, e))?;
+    let publisher_pubkey = keypair.pubkey();
+    info!(publisher = %publisher_pubkey, day, "verifying");
+
+    // Pull on-chain artifacts.
+    let (registry_pda, _) =
+        Pubkey::find_program_address(&[b"registry"], &oracle_program_id);
+    let registry_data = client
+        .get_account_data(&registry_pda)
+        .context("fetch ConstituentRegistry account")?;
+    let constituents = parse_registry(&registry_data).context("parse ConstituentRegistry")?;
+
+    let (price_update_pda, _) = Pubkey::find_program_address(
+        &[b"price", publisher_pubkey.as_ref(), &day.to_le_bytes()],
+        &oracle_program_id,
+    );
+    let pu_data = client.get_account_data(&price_update_pda).with_context(|| {
+        format!(
+            "PriceUpdate not found at {} — nothing was submitted for (publisher={}, day={})",
+            price_update_pda, publisher_pubkey, day
+        )
+    })?;
+    let submitted = parse_price_update(&pu_data).context("parse PriceUpdate")?;
+
+    info!(
+        submitted_publisher = %submitted.publisher,
+        submitted_day = submitted.day,
+        "fetched on-chain submission"
+    );
+    if submitted.publisher != publisher_pubkey {
+        return Err(anyhow!(
+            "PriceUpdate.publisher ({}) does not match local keypair ({})",
+            submitted.publisher,
+            publisher_pubkey
+        ));
+    }
+    if submitted.day != day {
+        return Err(anyhow!(
+            "PriceUpdate.day ({}) does not match requested day ({})",
+            submitted.day,
+            day
+        ));
+    }
+
+    // Local re-computation via the same path Run uses.
+    let (local_prices, local_sale_counts, local_root) = match cfg.sources.primary.as_str() {
+        "drift" | "registry_drift" => compute_drift(day, &constituents),
+        "ebay_browse" => compute_from_ebay(cfg, day, &constituents)
+            .await
+            .context("compute_from_ebay")?,
+        other => {
+            return Err(anyhow!(
+                "unknown [sources] primary: {:?} (expected 'drift' or 'ebay_browse')",
+                other
+            ));
+        }
+    };
+
+    // Per-slot comparison.
+    let tolerance_bps_i = tolerance_bps as i64;
+    let mut max_dev_bps: i64 = 0; // overall max — informational
+    let mut drift_count: u32 = 0; // count exceeding tolerance — actionable
+    for i in 0..25 {
+        let sub = submitted.prices[i];
+        let loc = local_prices[i];
+        let sub_sc = submitted.sale_counts[i];
+        let loc_sc = local_sale_counts[i];
+        let deviation_bps = if sub == 0 {
+            if loc == 0 { 0 } else { 99999 } // sub==0 should never happen (handler rejects)
+        } else {
+            (((loc as i128) - (sub as i128)) * 10_000 / sub as i128) as i64
+        };
+        let abs_dev = deviation_bps.unsigned_abs() as i64;
+        if abs_dev > max_dev_bps {
+            max_dev_bps = abs_dev;
+        }
+        let drifted = abs_dev > tolerance_bps_i;
+        if drifted {
+            drift_count += 1;
+            warn!(
+                slot = i,
+                submitted_price = sub,
+                local_price = loc,
+                submitted_sale_count = sub_sc,
+                local_sale_count = loc_sc,
+                deviation_bps,
+                "DRIFT"
+            );
+        } else {
+            info!(
+                slot = i,
+                submitted_price = sub,
+                local_price = loc,
+                deviation_bps,
+                "ok"
+            );
+        }
+    }
+
+    let root_match = submitted.source_root == local_root;
+    info!(
+        submitted_root = %hex_encode(&submitted.source_root),
+        local_root = %hex_encode(&local_root),
+        match_ = root_match,
+        "source_root"
+    );
+
+    if drift_count > 0 || !root_match {
+        return Err(anyhow!(
+            "verify FAILED: {drift_count}/25 slot(s) drifted (max {max_dev_bps} bps, tolerance {tolerance_bps} bps); source_root match = {root_match}"
+        ));
+    }
+    info!(
+        slots_checked = 25,
+        max_dev_bps,
+        "✓ verify OK — all slots within tolerance, source_root matches"
+    );
+    Ok(())
+}
+
+/// Decoded on-chain `PriceUpdate` (oracle::state::PriceUpdate, declaration-order
+/// borsh layout under Anchor's 8-byte discriminator):
+///   offset  0.. 8:  discriminator
+///   offset  8..40:  publisher (Pubkey)
+///   offset 40..44:  day (u32 LE)
+///   offset 44..244: prices ([u64; 25] LE)
+///   offset 244..294: sale_counts ([u16; 25] LE)
+///   offset 294..326: source_root ([u8; 32])
+///   offset 326..334: submitted_at (i64 LE)
+///   offset 334..335: bump (u8)
+struct SubmittedPriceUpdate {
+    publisher: Pubkey,
+    day: u32,
+    prices: [u64; 25],
+    sale_counts: [u16; 25],
+    source_root: [u8; 32],
+}
+
+fn parse_price_update(data: &[u8]) -> Result<SubmittedPriceUpdate> {
+    const PUBLISHER_OFF: usize = 8;
+    const DAY_OFF: usize = 40;
+    const PRICES_OFF: usize = 44;
+    const SALE_COUNTS_OFF: usize = 244;
+    const SOURCE_ROOT_OFF: usize = 294;
+    const MIN_LEN: usize = SOURCE_ROOT_OFF + 32;
+    if data.len() < MIN_LEN {
+        return Err(anyhow!(
+            "PriceUpdate account too short: {} bytes (need >= {})",
+            data.len(),
+            MIN_LEN
+        ));
+    }
+    let publisher = Pubkey::try_from(&data[PUBLISHER_OFF..PUBLISHER_OFF + 32])
+        .map_err(|_| anyhow!("publisher slice into Pubkey"))?;
+    let day = u32::from_le_bytes(
+        data[DAY_OFF..DAY_OFF + 4]
+            .try_into()
+            .map_err(|_| anyhow!("day slice"))?,
+    );
+    let mut prices = [0u64; 25];
+    for i in 0..25 {
+        let off = PRICES_OFF + i * 8;
+        prices[i] = u64::from_le_bytes(
+            data[off..off + 8]
+                .try_into()
+                .map_err(|_| anyhow!("price[{i}] slice"))?,
+        );
+    }
+    let mut sale_counts = [0u16; 25];
+    for i in 0..25 {
+        let off = SALE_COUNTS_OFF + i * 2;
+        sale_counts[i] = u16::from_le_bytes(
+            data[off..off + 2]
+                .try_into()
+                .map_err(|_| anyhow!("sale_count[{i}] slice"))?,
+        );
+    }
+    let mut source_root = [0u8; 32];
+    source_root.copy_from_slice(&data[SOURCE_ROOT_OFF..SOURCE_ROOT_OFF + 32]);
+    Ok(SubmittedPriceUpdate {
+        publisher,
+        day,
+        prices,
+        sale_counts,
+        source_root,
+    })
+}
+
+/// Tiny lowercase hex without pulling the `hex` crate in.
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 fn seconds_until_next(hour: u32, minute: u32) -> u64 {
