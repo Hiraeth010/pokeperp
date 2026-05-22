@@ -12,7 +12,7 @@ A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pok
 
 ## Status
 
-Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow.
+Working v0.4 end-to-end on localnet. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow. **88+ tests passing across the workspace** (17 oracle integration + 14 perp-engine integration + 5 funding-math unit + 52 publisher unit).
 
 **Implemented**
 
@@ -99,7 +99,7 @@ cd ../dashboard && npm run dev   # → http://localhost:3000
 Trade lifecycle scripts (run after the dashboard stack is up):
 
 - `services/dashboard/scripts/test-trade.ts` — open → add_margin → withdraw_margin → close. Default version pauses 7s before close so the indexer's 5s poll catches the open. Set `FAST_CLOSE=1` to skip.
-- `services/dashboard/scripts/test-modify.ts` — open → modify_position (+400) → modify_position (-300) → close. Prints size + OI + cumulative funding snapshot + mark TWAP at each step so you can watch the v0.2 funding-settlement + TWAP wire fire on every size change.
+- `services/dashboard/scripts/test-modify.ts` — open → modify_position (+400) → modify_position (-300) → close. Prints size + OI + cumulative funding snapshot + mark TWAP at each step so you can watch the v0.3 funding-settlement + TWAP wire fire on every size change.
 
 Audit:
 
@@ -110,10 +110,14 @@ Integration tests (require a fresh `--reset` validator):
 ```sh
 ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 \
 ANCHOR_WALLET="$HOME/.config/solana/id.json" \
+npx ts-mocha -p ./tsconfig.json -t 1000000 tests/oracle.ts
 npx ts-mocha -p ./tsconfig.json -t 1000000 tests/perp-engine.ts
 ```
 
-Covers setup (insurance + treasury + market) → open / add_margin / withdraw_margin / modify_position / close lifecycle with realized PnL + insurance + treasury accounting invariants → liquidation scaffold (mark-pressure via 10 longs at the 500k OI cap). The liquidation trigger fires only when the EMA-smoothed mark TWAP crosses the equity-below-MM threshold — the test gracefully `this.skip()`s when it doesn't (prints the equity vs MM numbers so you know why). 12 passing + sometimes 1 pending depending on EMA convergence.
+- `tests/oracle.ts` (17 tests): Config init, publisher register + bond escrow + activate-shadow-period gating, submit_price_update + duplicate rejection, registry init + update + finalize, aggregate_day all-stale path, challenge open/resolve stubs, emergency pause.
+- `tests/perp-engine.ts` (14 + 1 pending): setup (insurance + treasury + market) → open / add_margin / withdraw_margin / modify_position / close lifecycle → liquidation scaffold (mark-pressure via 10 longs at the 500k OI cap; `this.skip()` if the EMA-smoothed TWAP doesn't cross the equity-below-MM threshold — prints the actual equity vs MM numbers) → treasury withdrawal (admin + non-admin reject) → end-of-suite invariants (`insurance_vault.amount == deposited − paid_out`, same for treasury).
+
+Rust unit tests: `cargo test -p perp-engine --lib funding_tests` (5 passing) + `cd services/publisher && cargo test` (52 passing — methodology regex/filters, eBay JSON parsing, Card-Codex URL build + HTML scrape, state file round-trip, drift determinism).
 
 ## On-chain build / toolchain notes
 
@@ -127,9 +131,9 @@ Covers setup (insurance + treasury + market) → open / add_margin / withdraw_ma
 
 ## Off-chain components
 
-- **Publisher binary** (`services/publisher/`): Rust + Tokio. Config switches `[sources] primary` between `"drift"` (default, on-chain base_price + ±2% day-keyed perturbation, no external HTTP) and `"ebay_browse"` (OAuth2 client_credentials, paginated `item_summary/search?filter=soldItems`, methodology pipeline, real merkle root). See [docs/publisher.md](docs/publisher.md).
+- **Publisher binary** (`services/publisher/`): Rust + Tokio. Config switches `[sources] primary` between `"drift"` (default, on-chain base_price + ±2% day-keyed perturbation, no external HTTP) and `"ebay_browse"` (OAuth2 client_credentials, paginated `item_summary/search?filter=soldItems`, methodology pipeline, real merkle root). Three-tier fallback in `compute_from_ebay`: (1) eBay listings → trimmed mean, (2) Card-Codex aggregate price via `card-codex.com/pokemon/{era}/{set}/{slug}-{number}-{rarity}/` HTML scrape (23/25 inception cards mapped), (3) `apply_decay` against on-chain `base_price` using real `days_since_fresh` from `<config>.state.json`. See [docs/publisher.md](docs/publisher.md).
 - **Trader dashboard** (`services/dashboard/`): App Router + Tailwind + Solana wallet adapter. `useTradeActions` builds Anchor methods calls for open / modify / add-margin / withdraw-margin / close. Visual design system: `lib/cards.ts` maps internal `set_code` (e.g. `"ES"`) to pokemontcg.io set IDs (e.g. `"swsh7"`) and resolves to `https://images.pokemontcg.io/{set_id}/{number}.png` for card art — 16 sets currently mapped, covering the inception candidate list. Reusable components: `Pokeball`, `PokeperpLogo`, `CardImage` (with shimmer loader + graceful fallback for unmapped sets), `TypeBadge` (18-type pill palette). All Pokemon TCG card images are loaded at runtime from a third-party CDN — none are bundled or checked into the repo. See [docs/dashboard.md](docs/dashboard.md).
-- **Indexer** (`services/indexer/`): `tsx src/index.ts`. Captures initial state on startup then streams account changes; detects position closures by diffing the previous poll's known-position set.
+- **Indexer** (`services/indexer/`): `tsx src/index.ts`. Subscribes to IndexState + Market account changes via WebSocket; polls open positions every 5s. On close detection, fetches the `close_position` tx and parses pre/post token balances to derive realized PnL = `trader_usdc_delta − margin_vault_pre`. Writes JSONL to `services/indexer/data/{market,index,opens,closes}.jsonl`.
 
 ## License
 
