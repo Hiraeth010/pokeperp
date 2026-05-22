@@ -31,7 +31,7 @@ Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and 
 - Liquidation shortfall (margin < total_payouts_owed after funding settlement) is implicitly burned. The on-chain TODO is to draw from the insurance fund, then fall back to ADL.
 - Treasury withdrawal is admin-only (single signer = Market.admin). DAO / multisig governance hook is a v0.5 follow-up.
 - Open/resolve challenge skip bond escrow + slashing.
-- Publisher: real eBay Browse sold-items access needs Marketplace Insights partner approval; Card-Codex aggregate fallback not yet wired (data shape doesn't fit `PriceSource`); `days_since_fresh` per-constituent tracking still hardcodes `1` instead of reading a state file.
+- Publisher: real eBay Browse sold-items access needs Marketplace Insights partner approval; Card-Codex aggregate fallback not yet wired (data shape doesn't fit `PriceSource`). `days_since_fresh` is now tracked via a `<config>.state.json` sidecar (v0.3.1); Card-Codex aggregate source is the remaining publisher carve-out.
 
 ## Read order for new contributors
 
