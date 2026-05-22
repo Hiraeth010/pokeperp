@@ -1177,6 +1177,37 @@
           }
         },
         {
+          "name": "insurance_fund",
+          "docs": [
+            "Insurance fund metadata — total_deposited tracks the cumulative inflow of",
+            "taker fees + loss sweeps so the on-chain field matches actual vault balance."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "usdc_mint"
         },
         {

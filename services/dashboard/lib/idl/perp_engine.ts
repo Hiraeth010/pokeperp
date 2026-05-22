@@ -1183,6 +1183,37 @@ export type PerpEngine = {
           }
         },
         {
+          "name": "insuranceFund",
+          "docs": [
+            "Insurance fund metadata — total_deposited tracks the cumulative inflow of",
+            "taker fees + loss sweeps so the on-chain field matches actual vault balance."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "usdcMint"
         },
         {
@@ -1864,11 +1895,11 @@ export type PerpEngine = {
             "type": "i128"
           },
           {
-            "name": "markTwap1H",
+            "name": "markTwap1h",
             "type": "u64"
           },
           {
-            "name": "markTwap5Min",
+            "name": "markTwap5min",
             "type": "u64"
           },
           {

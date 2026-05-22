@@ -183,7 +183,7 @@ pub mod perp_engine {
         )?;
 
         // Move taker fee to the insurance vault.
-        // Spec §9 says 90% protocol treasury / 10% insurance; v0.1 simplification: 100% insurance.
+        // Spec §9 says 90% protocol treasury / 10% insurance; v0.2 simplification: 100% insurance.
         // TODO: split when a protocol treasury account exists.
         token::transfer(
             CpiContext::new(
@@ -196,6 +196,12 @@ pub mod perp_engine {
             ),
             taker_fee,
         )?;
+        ctx.accounts.insurance_fund.total_deposited = ctx
+            .accounts
+            .insurance_fund
+            .total_deposited
+            .checked_add(taker_fee)
+            .ok_or(PerpError::MathOverflow)?;
 
         // Write Position.
         let position = &mut ctx.accounts.position;
@@ -487,8 +493,19 @@ pub mod perp_engine {
             position.cumulative_funding_snapshot,
             position.size,
         )?;
+
+        // Close-side taker fee: |size| × fee_bps. Folded into PnL so the existing
+        // insurance-mediated settlement below routes the fee to the insurance vault
+        // automatically (it shows up as a "loss" the trader pays via reduced payout).
+        // Spec §9: 90% protocol / 10% insurance — v0.2 simplification: 100% insurance
+        // until a treasury account exists.
+        let close_fee = (abs_size as u128)
+            .checked_mul(ctx.accounts.market.taker_fee_bps as u128)
+            .and_then(|x| x.checked_div(10_000))
+            .ok_or(PerpError::MathOverflow)? as i128;
         let pnl = price_pnl
             .checked_sub(funding_owed)
+            .and_then(|x| x.checked_sub(close_fee))
             .ok_or(PerpError::MathOverflow)?;
 
         let margin = ctx.accounts.margin_vault.amount;
@@ -1233,6 +1250,15 @@ pub struct OpenPosition<'info> {
         bump,
     )]
     pub insurance_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Insurance fund metadata — total_deposited tracks the cumulative inflow of
+    /// taker fees + loss sweeps so the on-chain field matches actual vault balance.
+    #[account(
+        mut,
+        seeds = [INSURANCE_FUND_SEED],
+        bump = insurance_fund.bump,
+    )]
+    pub insurance_fund: Box<Account<'info, InsuranceFund>>,
 
     pub usdc_mint: Box<Account<'info, Mint>>,
 
