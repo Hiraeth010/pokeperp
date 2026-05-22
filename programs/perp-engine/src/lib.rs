@@ -734,9 +734,9 @@ pub mod perp_engine {
             .ok_or(PerpError::MathOverflow)?;
 
         // Funding can push an otherwise-solvent position under MM (a long that's
-        // been bleeding funding for hours). v0.2: only affects the trigger check —
-        // cash distribution below still works on raw `margin` and the penalty split.
-        // Spec: docs/perp-engine.md §4, §7.
+        // been bleeding funding for hours). The accumulator difference flows here
+        // too — see close_position for the symmetric path. Spec: docs/perp-engine.md
+        // §4, §7.
         let funding_owed = position_funding_owed(
             ctx.accounts.market.cumulative_funding_long,
             ctx.accounts.position.cumulative_funding_snapshot,
@@ -746,8 +746,8 @@ pub mod perp_engine {
             .checked_sub(funding_owed)
             .ok_or(PerpError::MathOverflow)?;
 
-        let margin = ctx.accounts.margin_vault.amount;
-        let equity = (margin as i128)
+        let margin_pre = ctx.accounts.margin_vault.amount;
+        let equity = (margin_pre as i128)
             .checked_add(pnl)
             .ok_or(PerpError::MathOverflow)?;
 
@@ -759,6 +759,80 @@ pub mod perp_engine {
             .ok_or(PerpError::MathOverflow)? as i128;
         require!(equity < mm_threshold, PerpError::PositionNotLiquidatable);
 
+        // ----- Funding cash flow -----
+        // Mirror close_position's settlement, but at liquidation we settle BEFORE the
+        // penalty split so the penalty distributes from the post-funding margin.
+        //  - funding_owed > 0: trader pays funding; cap at margin to avoid underflow,
+        //    insurance keeps whatever was there.
+        //  - funding_owed < 0: trader is owed funding; insurance vault pays in
+        //    (revert if it can't — v0.3 ADL fallback would handle this case).
+        let trader_key = ctx.accounts.trader.key();
+        let market_key = ctx.accounts.market.key();
+        let position_bump = ctx.accounts.position.bump;
+        let position_seeds: &[&[u8]] = &[
+            POSITION_SEED,
+            trader_key.as_ref(),
+            market_key.as_ref(),
+            std::slice::from_ref(&position_bump),
+        ];
+        let position_signer_seeds: &[&[&[u8]]] = &[position_seeds];
+
+        if funding_owed > 0 {
+            let owed = funding_owed as u64;
+            let amount = owed.min(margin_pre);
+            if amount > 0 {
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.margin_vault.to_account_info(),
+                            to: ctx.accounts.insurance_vault.to_account_info(),
+                            authority: ctx.accounts.position.to_account_info(),
+                        },
+                        position_signer_seeds,
+                    ),
+                    amount,
+                )?;
+                ctx.accounts.insurance_fund.total_deposited = ctx
+                    .accounts
+                    .insurance_fund
+                    .total_deposited
+                    .checked_add(amount)
+                    .ok_or(PerpError::MathOverflow)?;
+            }
+        } else if funding_owed < 0 {
+            let owed_to_trader = (-funding_owed) as u64;
+            require!(
+                ctx.accounts.insurance_vault.amount >= owed_to_trader,
+                PerpError::InsuranceBelowFloor
+            );
+            let fund_bump = ctx.accounts.insurance_fund.bump;
+            let fund_seeds: &[&[u8]] =
+                &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+            let fund_signer_seeds: &[&[&[u8]]] = &[fund_seeds];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.insurance_vault.to_account_info(),
+                        to: ctx.accounts.margin_vault.to_account_info(),
+                        authority: ctx.accounts.insurance_fund.to_account_info(),
+                    },
+                    fund_signer_seeds,
+                ),
+                owed_to_trader,
+            )?;
+            ctx.accounts.insurance_fund.total_paid_out = ctx
+                .accounts
+                .insurance_fund
+                .total_paid_out
+                .checked_add(owed_to_trader)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+        // Reload margin vault — post-funding balance feeds the penalty distribution.
+        ctx.accounts.margin_vault.reload()?;
+        let margin = ctx.accounts.margin_vault.amount;
+
         // Penalty: 1.5% of |size|, split 1/3 to liquidator + 2/3 to insurance
         let total_penalty = (abs_size as u128)
             .checked_mul(ctx.accounts.market.liquidation_penalty_bps as u128)
@@ -768,7 +842,7 @@ pub mod perp_engine {
         let insurance_share = total_penalty - liquidator_share;
 
         // Distribute from margin vault; payouts are bounded by what's actually in the vault.
-        // Shortfall (when margin < total_payouts owed) implicitly burned in v0.1.
+        // Shortfall (when margin < total_payouts owed) implicitly burned in v0.2.
         // TODO: insurance fund draw + ADL when shortfall (perp-engine.md §7/§8).
         let mut available = margin;
         let liq_payout = liquidator_share.min(available);
@@ -778,16 +852,9 @@ pub mod perp_engine {
         let trader_payout = available;
 
         // PDA-signed transfers (position PDA is the margin vault authority)
-        let trader_key = ctx.accounts.trader.key();
-        let market_key = ctx.accounts.market.key();
-        let position_bump = ctx.accounts.position.bump;
-        let seeds: &[&[u8]] = &[
-            POSITION_SEED,
-            trader_key.as_ref(),
-            market_key.as_ref(),
-            std::slice::from_ref(&position_bump),
-        ];
-        let signer_seeds: &[&[&[u8]]] = &[seeds];
+        // Reuse the position_signer_seeds declared above for the funding-cash-flow
+        // step — same PDA signs all outbound transfers from the margin vault.
+        let signer_seeds = position_signer_seeds;
 
         if liq_payout > 0 {
             token::transfer(
