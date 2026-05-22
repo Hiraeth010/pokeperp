@@ -59,11 +59,16 @@ describe("oracle", () => {
     );
 
     // Publisher needs SOL to pay PriceUpdate rent in the submit test.
-    const airdropSig = await provider.connection.requestAirdrop(
-      publisherKp.publicKey,
-      1 * LAMPORTS_PER_SOL
+    // Use SystemProgram.transfer rather than requestAirdrop — Solana 1.18's
+    // localnet faucet rejects airdrops on Windows ("Internal error").
+    const fundTx = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: provider.wallet.publicKey,
+        toPubkey: publisherKp.publicKey,
+        lamports: 1 * LAMPORTS_PER_SOL,
+      })
     );
-    await provider.connection.confirmTransaction(airdropSig, "confirmed");
+    await provider.sendAndConfirm(fundTx, []);
   });
 
   it("initializes config with expected fields", async () => {
@@ -246,8 +251,82 @@ describe("oracle", () => {
     expect(threw, "duplicate submission should have reverted").to.equal(true);
   });
 
-  it("activates a publisher after the shadow period", async () => {
-    // TODO: oracle.md §2 — verify 30-day elapsed + deviation thresholds met, transition to Active.
+  it("rejects activation while publisher is still in shadow period", async () => {
+    // Spec: docs/oracle.md §2 — publishers must spend 30 days in Shadow before
+    // they can be promoted to Active. The current_day - joined_day check
+    // reverts PublisherInShadow if elapsed < 30. Positive path (elapsed >= 30
+    // + admin promotes) needs a clock-warped validator which Solana 1.18's
+    // test-validator doesn't expose cleanly — deferred to a separate test
+    // harness once we have devnet automation.
+    const [publisherPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // The publisher was just registered earlier in this suite (joined_day =
+    // today). elapsed_days = 0; well below the 30-day requirement.
+    let threw = false;
+    let errCode: string | undefined;
+    try {
+      await program.methods
+        .activatePublisher()
+        .accounts({
+          config: configPda,
+          admin: provider.wallet.publicKey,
+          publisherAccount: publisherPda,
+        })
+        .rpc();
+    } catch (e) {
+      threw = true;
+      const msg = e instanceof Error ? e.message : String(e);
+      // Anchor surfaces the error code in the message; check the spec'd one.
+      if (msg.includes("PublisherInShadow")) errCode = "PublisherInShadow";
+    }
+    expect(threw, "activation during shadow period should revert").to.equal(
+      true
+    );
+    expect(errCode, "should revert with PublisherInShadow specifically").to.equal(
+      "PublisherInShadow"
+    );
+
+    // Confirm the publisher status is unchanged.
+    const publisher = await program.account.publisher.fetch(publisherPda);
+    expect(publisher.status).to.deep.equal({ shadow: {} });
+  });
+
+  it("rejects activation from a non-admin signer", async () => {
+    // Spec: docs/oracle.md §2 — only the oracle admin can promote publishers.
+    const stranger = Keypair.generate();
+    const fundTx = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: provider.wallet.publicKey,
+        toPubkey: stranger.publicKey,
+        lamports: LAMPORTS_PER_SOL,
+      })
+    );
+    await provider.sendAndConfirm(fundTx, []);
+
+    const [publisherPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+
+    let threw = false;
+    try {
+      await program.methods
+        .activatePublisher()
+        .accounts({
+          config: configPda,
+          admin: stranger.publicKey,
+          publisherAccount: publisherPda,
+        })
+        .signers([stranger])
+        .rpc();
+    } catch (_e) {
+      threw = true;
+      // Anchor catches the admin == config.admin constraint as Unauthorized.
+    }
+    expect(threw, "non-admin activation should revert").to.equal(true);
   });
 
   it("initializes the constituent registry to zero state", async () => {
