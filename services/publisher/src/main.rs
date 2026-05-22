@@ -32,7 +32,9 @@ use std::str::FromStr;
 use tracing::{info, warn};
 
 use crate::methodology::MethodologyConfig;
-use crate::sources::{ConstituentQuery, PriceSource, SoldListing, TimeWindow};
+use crate::sources::{
+    AggregatePriceSource, ConstituentQuery, PriceSource, SoldListing, TimeWindow,
+};
 use crate::state::{state_path_for_config, PublisherState};
 use crate::submit::SubmitParams;
 
@@ -527,6 +529,12 @@ async fn compute_from_ebay(
     state: &mut PublisherState,
 ) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
     let source = build_ebay_source(cfg)?;
+    // Aggregate fallback (Card-Codex) is queried when the listing-based source
+    // returns insufficient samples. Always-on for now — no config gate needed
+    // because the per-card URL mapping returns None for cards Card-Codex
+    // doesn't cover, naturally falling through to apply_decay.
+    let aggregate: Box<dyn AggregatePriceSource> =
+        Box::new(sources::card_codex::CardCodexSource::new());
     let methodology_cfg = MethodologyConfig {
         trim_top_pct: cfg.methodology.trim_top_pct,
         trim_bottom_pct: cfg.methodology.trim_bottom_pct,
@@ -587,19 +595,39 @@ async fn compute_from_ebay(
                 );
             }
             None => {
-                // Real days_since_fresh from PublisherState (v0.3.1). Defaults
-                // to 1 when no prior fresh record exists, matching the v0.2
-                // hardcoded fallback.
-                let days_since_fresh = state.days_since_fresh(i as u8, day);
-                let decayed = methodology::apply_decay(c.base_price, days_since_fresh, decay);
-                prices[i] = decayed.max(1);
-                sale_counts[i] = 1; // on-chain handler rejects zero
-                warn!(
-                    constituent = i,
-                    decayed_price = prices[i],
-                    days_since_fresh,
-                    "stale fallback (insufficient samples)"
-                );
+                // Try the aggregate source (Card-Codex) before falling to decay.
+                // The aggregate is a single pre-trimmed PSA 10 number — we
+                // treat it as authoritative when present (no extra trim) but
+                // record sample_count = 1 to signal "single point" provenance.
+                let aggregate_price = aggregate.fetch_price(&query).await.ok().flatten();
+                if let Some(p) = aggregate_price {
+                    prices[i] = p;
+                    sale_counts[i] = 1;
+                    // Aggregate counts as a fresh observation — the source is
+                    // current. Record so decay doesn't fire on next miss.
+                    state.record_fresh(i as u8, day);
+                    info!(
+                        constituent = i,
+                        price = p,
+                        source = aggregate.name(),
+                        "constituent priced via aggregate fallback"
+                    );
+                } else {
+                    // Real days_since_fresh from PublisherState (v0.3.1).
+                    // Defaults to 1 when no prior fresh record exists, matching
+                    // the v0.2 hardcoded fallback.
+                    let days_since_fresh = state.days_since_fresh(i as u8, day);
+                    let decayed =
+                        methodology::apply_decay(c.base_price, days_since_fresh, decay);
+                    prices[i] = decayed.max(1);
+                    sale_counts[i] = 1;
+                    warn!(
+                        constituent = i,
+                        decayed_price = prices[i],
+                        days_since_fresh,
+                        "stale fallback (no listings + no aggregate)"
+                    );
+                }
             }
         }
     }

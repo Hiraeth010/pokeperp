@@ -1,6 +1,7 @@
 //! Price source abstraction. Each publisher chooses one primary + zero or more secondary sources.
 //! Spec: docs/publisher.md §5.
 
+pub mod card_codex;
 pub mod ebay_browse;
 pub mod pricecharting;
 
@@ -45,6 +46,25 @@ pub trait PriceSource: Send + Sync {
         constituent: &ConstituentQuery,
         window: TimeWindow,
     ) -> Result<Vec<SoldListing>>;
+
+    fn name(&self) -> &'static str;
+}
+
+/// Aggregate-price source. Returns a single price per constituent rather than
+/// raw listings — designed for sites that publish a pre-trimmed PSA 10 price
+/// (Card-Codex, Pokeval, etc.) instead of individual sale records. The pipeline
+/// falls back here when the primary listing-based source returns insufficient
+/// samples to compute a trimmed mean.
+///
+/// `Ok(None)` means "queried successfully, but no price available" (404, card
+/// not in mapping, etc). `Err` is reserved for transport / parse failures
+/// where retrying might help.
+#[async_trait]
+pub trait AggregatePriceSource: Send + Sync {
+    async fn fetch_price(
+        &self,
+        constituent: &ConstituentQuery,
+    ) -> Result<Option<u64>>;
 
     fn name(&self) -> &'static str;
 }
