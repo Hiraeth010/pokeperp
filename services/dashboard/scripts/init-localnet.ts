@@ -120,7 +120,9 @@ async function main(): Promise<void> {
         publisherBond: new BN(10_000_000_000),
         challengeBond: new BN(1_000_000_000),
         minPublishersPerDay: 1,
-        submissionWindowStart: 20 * 3600,
+        // Dev: full-day submission window so localnet/CI runs aren't blocked at
+        // 00:00 UTC. Production defaults to 20:00-23:59 UTC per docs/oracle.md §4.
+        submissionWindowStart: 0,
         submissionWindowEnd: 24 * 3600 - 1,
         challengeWindowSeconds: 3600,
       })

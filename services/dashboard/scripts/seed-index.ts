@@ -117,23 +117,37 @@ async function main(): Promise<void> {
       .rpc()
   );
 
-  // [2] Submit price update for day = today - 1 (within submission window)
+  // [2] Submit price update for the chosen day (defaults to today - 1).
+  // Override with `--day N` to re-aggregate on a fresh day after a registry
+  // change — useful when the existing IndexState's aggregated_prices are stale
+  // against the new base prices.
   const now = Math.floor(Date.now() / 1000);
   const currentDay = Math.floor(now / 86_400);
-  const submissionDay = currentDay - 1;
+  const dayArgIdx = process.argv.indexOf("--day");
+  const submissionDay =
+    dayArgIdx !== -1 && process.argv[dayArgIdx + 1] !== undefined
+      ? Number(process.argv[dayArgIdx + 1])
+      : currentDay - 1;
   console.log(`\n[2] Submit price update for day ${submissionDay} (current day ${currentDay})...`);
 
-  // Build a 25-entry price array. Handler requires all entries > 0.
-  // First 3 slots reflect the seeded constituents; rest get placeholder $100.
-  const prices: BN[] = Array.from({ length: 25 }, () => new BN(100_000_000));
-  prices[0] = new BN(1450_000_000); // Umbreon VMAX AA
-  prices[1] = new BN(2825_000_000); // Rayquaza VMAX AA
-  prices[2] = new BN(3085_000_000); // Giratina V AA
-
-  const saleCounts: number[] = Array.from({ length: 25 }, () => 1);
-  saleCounts[0] = 50;
-  saleCounts[1] = 50;
-  saleCounts[2] = 50;
+  // 25 prices in micro-USDC. Keep these in sync with init-localnet.ts seed list
+  // so post-aggregation %change against base_price reads ~0% across the board.
+  const usd = (n: number) => new BN(n * 1_000_000);
+  const prices: BN[] = [
+    usd(1450), usd(2825), usd( 574), usd( 319), usd( 400),
+    usd( 250), usd(3085), usd(1593), usd( 958), usd( 229),
+    usd( 394), usd( 399), usd( 494), usd( 592), usd(2761),
+    usd( 655), usd(1245), usd(1781), usd( 160), usd( 200),
+    usd( 800), usd( 300), usd( 200), usd( 393), usd( 500),
+  ];
+  // Verified-tier cards get realistic sale counts; rest get a nominal 5.
+  const saleCounts: number[] = [
+    50, 50, 30, 20, 15,
+    10, 50, 50, 30, 20,
+    10, 30, 20, 15, 40,
+    20, 25, 50, 10,  5,
+    15, 10, 10,  5,  5,
+  ];
 
   const sourceRoot = Array.from(Buffer.alloc(32));
 
