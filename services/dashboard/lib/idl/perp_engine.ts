@@ -835,13 +835,21 @@ export type PerpEngine = {
     {
       "name": "modifyPosition",
       "docs": [
-        "Modify an existing position by `delta_size` (same-side only in v0.1; no flips).",
+        "Modify an existing position by `delta_size` (same-side only in v0.2; no flips).",
         "Spec: docs/perp-engine.md §3 execution.",
         "",
-        "v0.1 simplifications:",
+        "v0.2 flow:",
+        "- Settles per-position funding (against OLD size) into the insurance vault",
+        "BEFORE changing size, so funding accrued on the pre-modify size doesn't",
+        "leak when the post-modify size carries the old snapshot forward.",
+        "- Re-snapshots `cumulative_funding_snapshot` to current so the next close",
+        "/ modify only sees post-modify funding.",
+        "- Updates mark TWAPs with the post-modify mark.",
+        "",
+        "Still v0.2 simplifications:",
         "- Same-side only (delta must not change the sign of position.size)",
-        "- No fees, no PnL realization on partial close, no entry-price weighted averaging",
-        "- Margin requirements re-checked against the new size",
+        "- No price-PnL realization on partial close, no entry-price weighted averaging",
+        "- No taker fee",
         "- To flip side, the trader must close and reopen"
       ],
       "discriminator": [
@@ -910,6 +918,10 @@ export type PerpEngine = {
         },
         {
           "name": "marginVault",
+          "docs": [
+            "Margin vault; authority = position PDA. Mutated during funding settlement."
+          ],
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -939,6 +951,79 @@ export type PerpEngine = {
               }
             ]
           }
+        },
+        {
+          "name": "insuranceFund",
+          "docs": [
+            "Insurance fund metadata — total_deposited / total_paid_out updated by",
+            "funding settlement."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "insuranceVault",
+          "docs": [
+            "Insurance vault — receives positive funding, source of negative funding.",
+            "Authority = insurance_fund PDA."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "indexState",
+          "docs": [
+            "Oracle index for the post-modify mark price computation."
+          ]
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [

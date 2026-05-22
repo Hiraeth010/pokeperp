@@ -224,13 +224,21 @@ pub mod perp_engine {
     }
 
 
-    /// Modify an existing position by `delta_size` (same-side only in v0.1; no flips).
+    /// Modify an existing position by `delta_size` (same-side only in v0.2; no flips).
     /// Spec: docs/perp-engine.md §3 execution.
     ///
-    /// v0.1 simplifications:
+    /// v0.2 flow:
+    /// - Settles per-position funding (against OLD size) into the insurance vault
+    ///   BEFORE changing size, so funding accrued on the pre-modify size doesn't
+    ///   leak when the post-modify size carries the old snapshot forward.
+    /// - Re-snapshots `cumulative_funding_snapshot` to current so the next close
+    ///   / modify only sees post-modify funding.
+    /// - Updates mark TWAPs with the post-modify mark.
+    ///
+    /// Still v0.2 simplifications:
     /// - Same-side only (delta must not change the sign of position.size)
-    /// - No fees, no PnL realization on partial close, no entry-price weighted averaging
-    /// - Margin requirements re-checked against the new size
+    /// - No price-PnL realization on partial close, no entry-price weighted averaging
+    /// - No taker fee
     /// - To flip side, the trader must close and reopen
     pub fn modify_position(ctx: Context<ModifyPosition>, delta_size: i64) -> Result<()> {
         require!(
@@ -257,39 +265,150 @@ pub mod perp_engine {
             PerpError::PositionTooLarge
         );
 
-        // Update OI
+        // ----- Funding settlement against OLD size -----
+        // Insurance vault mediates funding flow (zero-sum between longs/shorts but
+        // not directly paired in v0.2). Same pattern as close_position. After this
+        // block the margin vault balance has changed (paid out or received in) and
+        // the position snapshot is current. Spec: docs/perp-engine.md §4.
+        let cumulative = ctx.accounts.market.cumulative_funding_long;
+        let funding_owed = position_funding_owed(
+            cumulative,
+            ctx.accounts.position.cumulative_funding_snapshot,
+            old_size,
+        )?;
+
+        let trader_key = ctx.accounts.trader.key();
+        let market_key = ctx.accounts.market.key();
+        let position_bump = ctx.accounts.position.bump;
+        let position_seeds: &[&[u8]] = &[
+            POSITION_SEED,
+            trader_key.as_ref(),
+            market_key.as_ref(),
+            std::slice::from_ref(&position_bump),
+        ];
+        let position_signer: &[&[&[u8]]] = &[position_seeds];
+
+        if funding_owed > 0 {
+            // Trader pays funding into insurance.
+            let amount = funding_owed as u64;
+            require!(
+                ctx.accounts.margin_vault.amount >= amount,
+                PerpError::InsufficientMargin
+            );
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.margin_vault.to_account_info(),
+                        to: ctx.accounts.insurance_vault.to_account_info(),
+                        authority: ctx.accounts.position.to_account_info(),
+                    },
+                    position_signer,
+                ),
+                amount,
+            )?;
+            ctx.accounts.insurance_fund.total_deposited = ctx
+                .accounts
+                .insurance_fund
+                .total_deposited
+                .checked_add(amount)
+                .ok_or(PerpError::MathOverflow)?;
+        } else if funding_owed < 0 {
+            // Insurance pays funding to trader's margin vault.
+            let amount = (-funding_owed) as u64;
+            require!(
+                ctx.accounts.insurance_vault.amount >= amount,
+                PerpError::InsuranceBelowFloor
+            );
+            let fund_bump = ctx.accounts.insurance_fund.bump;
+            let fund_seeds: &[&[u8]] =
+                &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+            let fund_signer: &[&[&[u8]]] = &[fund_seeds];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.insurance_vault.to_account_info(),
+                        to: ctx.accounts.margin_vault.to_account_info(),
+                        authority: ctx.accounts.insurance_fund.to_account_info(),
+                    },
+                    fund_signer,
+                ),
+                amount,
+            )?;
+            ctx.accounts.insurance_fund.total_paid_out = ctx
+                .accounts
+                .insurance_fund
+                .total_paid_out
+                .checked_add(amount)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+
+        // Re-snapshot so any future funding accrual on this position starts from
+        // the post-settlement accumulator value.
+        ctx.accounts.position.cumulative_funding_snapshot = cumulative;
+
+        // ----- Size + OI update -----
         let old_abs = old_size.unsigned_abs();
         let is_long = old_size > 0;
-        let market = &mut ctx.accounts.market;
-        if is_long {
-            market.long_oi = market
+        let (new_long_oi, new_short_oi) = if is_long {
+            let new_long = ctx
+                .accounts
+                .market
                 .long_oi
                 .checked_sub(old_abs)
                 .and_then(|v| v.checked_add(new_abs))
                 .ok_or(PerpError::MathOverflow)?;
             require!(
-                market.long_oi <= market.max_oi_per_side,
+                new_long <= ctx.accounts.market.max_oi_per_side,
                 PerpError::OICapExceeded
             );
+            (new_long, ctx.accounts.market.short_oi)
         } else {
-            market.short_oi = market
+            let new_short = ctx
+                .accounts
+                .market
                 .short_oi
                 .checked_sub(old_abs)
                 .and_then(|v| v.checked_add(new_abs))
                 .ok_or(PerpError::MathOverflow)?;
             require!(
-                market.short_oi <= market.max_oi_per_side,
+                new_short <= ctx.accounts.market.max_oi_per_side,
                 PerpError::OICapExceeded
             );
-        }
+            (ctx.accounts.market.long_oi, new_short)
+        };
 
-        // Re-check IM against current margin in vault
+        // Re-check IM against FRESH margin (post-funding settlement).
+        ctx.accounts.margin_vault.reload()?;
         let margin = ctx.accounts.margin_vault.amount;
         let required_im = (new_abs as u128)
-            .checked_mul(market.initial_margin_bps as u128)
+            .checked_mul(ctx.accounts.market.initial_margin_bps as u128)
             .and_then(|x| x.checked_div(10_000))
             .ok_or(PerpError::MathOverflow)? as u64;
         require!(margin >= required_im, PerpError::InsufficientMargin);
+
+        // ----- Mark + TWAP update -----
+        let index_state = &ctx.accounts.index_state;
+        require!(
+            index_state.status == IndexStatus::Provisional
+                || index_state.status == IndexStatus::Final,
+            PerpError::OracleStale
+        );
+        let index_price = index_state.index_value;
+        require!(index_price > 0, PerpError::OracleStale);
+        let new_mark_price = compute_mark_price(
+            index_price,
+            new_long_oi,
+            new_short_oi,
+            ctx.accounts.market.oi_floor,
+            ctx.accounts.market.slippage_factor,
+        )?;
+
+        let market = &mut ctx.accounts.market;
+        market.long_oi = new_long_oi;
+        market.short_oi = new_short_oi;
+        update_mark_twaps(market, new_mark_price)?;
 
         ctx.accounts.position.size = new_size;
         Ok(())
@@ -485,9 +604,7 @@ pub mod perp_engine {
         // Mark TWAPs reflect the post-close observation.
         update_mark_twaps(market, close_mark_price)?;
 
-        // TODO §9: charge close-side taker fee.
-        // TODO: modify_position also needs per-position funding settlement + TWAP update;
-        // current path snapshots at open and never re-settles on size changes (v0.3).
+        // TODO §9: charge close-side taker fee (v0.3).
 
         Ok(())
     }
@@ -1147,11 +1264,39 @@ pub struct ModifyPosition<'info> {
     )]
     pub position: Box<Account<'info, Position>>,
 
+    /// Margin vault; authority = position PDA. Mutated during funding settlement.
     #[account(
+        mut,
         seeds = [MARGIN_VAULT_SEED, trader.key().as_ref(), market.key().as_ref()],
         bump,
     )]
     pub margin_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Insurance fund metadata — total_deposited / total_paid_out updated by
+    /// funding settlement.
+    #[account(
+        mut,
+        seeds = [INSURANCE_FUND_SEED],
+        bump = insurance_fund.bump,
+    )]
+    pub insurance_fund: Box<Account<'info, InsuranceFund>>,
+
+    /// Insurance vault — receives positive funding, source of negative funding.
+    /// Authority = insurance_fund PDA.
+    #[account(
+        mut,
+        seeds = [INSURANCE_VAULT_SEED],
+        bump,
+    )]
+    pub insurance_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Oracle index for the post-modify mark price computation.
+    #[account(
+        constraint = index_state.key() == market.oracle_index_state @ PerpError::OracleStale,
+    )]
+    pub index_state: Box<Account<'info, IndexState>>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
