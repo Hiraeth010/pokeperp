@@ -6,6 +6,8 @@ A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pok
 
 ![Pokeperp trade page — Mark vs Index chart, underlying constituents strip, trade panel](docs/screenshots/trade.png)
 
+![Pokeperp portfolio page — wallet-gated open positions / close history above the market-wide cumulative funding chart](docs/screenshots/portfolio.png)
+
 > Card art shown is loaded at runtime from the [pokemontcg.io](https://pokemontcg.io) CDN — none of it is bundled or checked into this repo. Pokeperp is not affiliated with Nintendo, The Pokémon Company, or PSA.
 
 ## Status
@@ -15,9 +17,9 @@ Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and 
 **Implemented**
 
 - **Oracle program** (13/13 instructions): config + publisher onboarding, 25-slot constituent registry with chunked rebalance updates, daily push submissions with on-chain median aggregation + provisional/final lifecycle, challenge open/resolve, emergency pause.
-- **Perp engine program** (12/12 instructions): isolated-margin positions, oracle-anchored vAMM mark price (`index × (1 + slippage_factor × imbalance)`), per-trade mark-TWAP EMA on open / close / modify, insurance-mediated PnL settlement on close, per-position funding settlement on close + liquidate + modify (settles against pre-modify size, re-snapshots, then resizes), liquidation with penalty split, auto-deleverage path, taker fees to insurance vault.
-- **Publisher binary** (`services/publisher/`): standalone Rust service. Reads the on-chain registry, computes prices via either a deterministic drift path (for localnet/staging) or the real eBay Browse source with the methodology pipeline (PSA 10 regex + qualifier rejection, English-only CJK filter, variant matching, multi-window fallback, trimmed mean), then submits a signed `PriceUpdate` to the oracle. Real merkle root over selected leaves.
-- **Dashboard** (`services/dashboard/`): Next.js 15 / App Router. Pokemon-themed visual design — live card art from the pokemontcg.io CDN keyed off the on-chain `set_code` + `collector_number`, Pokeball-glyph wordmark in Russo One, animated foil gradient on the index value, Pokemon-type accent palette (fire = long, water = short, electric = highlights, psychic/dragon/grass for variant badges), holographic shimmer on card tiles. Pages: `/` (PMT25 hero + Top Movers grid + Market State with Long/Short OI proportional bar), `/trade` (slim index ticker + Mark-vs-Index chart + scrolling constituent strip + trade panel with leverage slider), `/portfolio` (open positions with type-stripe accents + close history with realized P&L column).
+- **Perp engine program** (12/12 instructions): isolated-margin positions, oracle-anchored vAMM mark price (`index × (1 + slippage_factor × imbalance)`), per-trade mark-TWAP EMA on open / close / modify, insurance-mediated PnL settlement on close, per-position funding settlement on close + liquidate + modify (settles against pre-modify size, re-snapshots, then resizes), open + close taker fees folded into insurance accounting (open's transfer also bumps `InsuranceFund.total_deposited`, close's fee is subtracted from pnl and routed via the existing settlement path), liquidation with penalty split, auto-deleverage path.
+- **Publisher binary** (`services/publisher/`): standalone Rust service. Reads the on-chain registry, computes prices via either a deterministic drift path (for localnet/staging) or the real eBay Browse source with the methodology pipeline (PSA 10 regex + qualifier rejection, English-only CJK filter, variant matching, multi-window fallback, trimmed mean), then submits a signed `PriceUpdate` to the oracle. Real merkle root over selected leaves. `verify --day N [--tolerance-bps M]` re-runs a day's computation locally and compares to the on-chain submission for post-hoc audit; reports per-slot deviation and source-root match, non-zero exit on disagreement.
+- **Dashboard** (`services/dashboard/`): Next.js 15 / App Router. Pokemon-themed visual design — live card art from the pokemontcg.io CDN keyed off the on-chain `set_code` + `collector_number`, Pokeball-glyph wordmark in Russo One, animated foil gradient on the index value, Pokemon-type accent palette (fire = long, water = short, electric = highlights, psychic/dragon/grass for variant badges), holographic shimmer on card tiles. Pages: `/` (PMT25 hero + Top Movers grid + Market State with Long/Short OI proportional bar), `/trade` (slim index ticker + Mark-vs-Index chart + scrolling constituent strip + trade panel with leverage slider), `/portfolio` (wallet-gated open positions with type-stripe accents + close history with realized P&L column, plus a market-wide cumulative funding chart rendered regardless of wallet state).
 - **Indexer** (`services/indexer/`): subscribes to IndexState + Market account changes and polls position closures every 5 seconds. On each detected close, fetches the `close_position` tx and parses pre/post token balances to derive realized PnL = `trader_usdc_delta − margin_vault_pre`. Writes JSONL to `services/indexer/data/`; the dashboard reads via Next.js API routes.
 - **Localnet seed**: `init-localnet.ts` seeds the full 25-constituent PMT25 inception list (verified prices for the 17 cards in [docs/inception-candidates.md](docs/inception-candidates.md) §2 plus best-estimate prices for the 6 unverified holdouts plus 2 Trainer Gallery / Shiny Vault fillers). `seed-index.ts` submits matching prices so the dashboard reads $1000.00 with 0% drift across all 25 cards on a fresh bring-up.
 
@@ -25,11 +27,9 @@ Working v0.2 end-to-end on localnet. Both on-chain programs are implemented and 
 
 - `auto_deleverage` has no on-chain ranking — caller asserts the position is most profitable.
 - `liquidate` funding affects the trigger but not the cash distribution.
-- `close_position` doesn't charge a close-side taker fee yet (only open is charged).
-- Insurance accounting nit: `open_position` taker fee bypasses `total_deposited`.
-- Taker fee split: 100% to insurance currently; spec calls for 90% protocol / 10% insurance.
+- Taker fee split: 100% to insurance currently; spec calls for 90% protocol / 10% insurance (needs a treasury account).
 - Open/resolve challenge skip bond escrow + slashing.
-- Publisher: real eBay Browse sold-items access needs Marketplace Insights partner approval; Card-Codex aggregate fallback not yet wired (data shape doesn't fit `PriceSource`).
+- Publisher: real eBay Browse sold-items access needs Marketplace Insights partner approval; Card-Codex aggregate fallback not yet wired (data shape doesn't fit `PriceSource`); `days_since_fresh` per-constituent tracking still hardcodes `1` instead of reading a state file.
 
 ## Read order for new contributors
 
@@ -98,6 +98,10 @@ Trade lifecycle scripts (run after the dashboard stack is up):
 
 - `services/dashboard/scripts/test-trade.ts` — open → add_margin → withdraw_margin → close. Default version pauses 7s before close so the indexer's 5s poll catches the open. Set `FAST_CLOSE=1` to skip.
 - `services/dashboard/scripts/test-modify.ts` — open → modify_position (+400) → modify_position (-300) → close. Prints size + OI + cumulative funding snapshot + mark TWAP at each step so you can watch the v0.2 funding-settlement + TWAP wire fire on every size change.
+
+Audit:
+
+- `cd services/publisher && cargo run -- --config examples/publisher.localnet.toml verify --day N [--tolerance-bps M]` — re-runs day N's computation locally and compares to the on-chain submission. Drift mode is deterministic so `--tolerance-bps 0` is the correct strict check; ebay_browse should tolerate a few bps to absorb sample-window churn.
 
 ## On-chain build / toolchain notes
 
