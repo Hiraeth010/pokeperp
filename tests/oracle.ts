@@ -507,23 +507,423 @@ describe("oracle", () => {
     // publishers (each must sign their own submit_price_update) — TODO once test infra supports it.
   });
 
+  // ---- Challenge / slashing flow (oracle.md §6, §7) ----
+  // Shared state across the four challenge tests. The first test opens a challenge
+  // against publisherKp for (submissionDay, constituent=0); the second resolves it as
+  // succeeded with the 10% slash tier. The third opens a SECOND challenge against the
+  // same publisher for constituent=1 and resolves as failed to exercise the refund/treasury
+  // distribution. The treasury vault is created once and wired into Config via
+  // set_protocol_treasury before any resolve.
+  const challengerKp = Keypair.generate();
+  let challengerUsdcAta: PublicKey;
+  let treasuryVault: PublicKey;
+  const challengeBond = BigInt(1_000_000_000); // 1k USDC, matches Config.challengeBond from initialize test.
+  const publisherInitialBond = BigInt(10_000_000_000); // 10k USDC, matches Config.publisherBond.
+  const submissionDayForChallenge = (() => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const currentDay = Math.floor(nowSec / 86400);
+    return currentDay - 1;
+  })();
+
   it("accepts a challenge within the 1-hour window", async () => {
-    // TODO: oracle.md §6.
+    // Spec: docs/oracle.md §6 — challenge opens within challenge_window_seconds of
+    // IndexState going Provisional. Bond is escrowed into a per-challenge PDA vault.
+
+    // Fund challenger with SOL + USDC for the bond.
+    const fundSol = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: provider.wallet.publicKey,
+        toPubkey: challengerKp.publicKey,
+        lamports: LAMPORTS_PER_SOL,
+      })
+    );
+    await provider.sendAndConfirm(fundSol, []);
+
+    challengerUsdcAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      challengerKp.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      challengerUsdcAta,
+      mintAuthority,
+      Number(challengeBond * BigInt(3)) // enough for two challenges + slack
+    );
+
+    // Create the protocol treasury USDC vault (in real deployments this is the
+    // perp-engine Treasury PDA; here we use a plain SPL token account owned by
+    // a fresh keypair — oracle never signs for it, only transfers INTO it).
+    const treasuryOwner = Keypair.generate();
+    treasuryVault = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      treasuryOwner.publicKey
+    );
+
+    // Wire the treasury into Config (admin-only).
+    await program.methods
+      .setProtocolTreasury(treasuryVault)
+      .accounts({
+        config: configPda,
+        admin: provider.wallet.publicKey,
+      })
+      .rpc();
+    const cfg = await program.account.config.fetch(configPda);
+    expect(cfg.protocolTreasuryVault.toBase58()).to.equal(treasuryVault.toBase58());
+
+    // Open the challenge against publisherKp for (submissionDay, constituent 0).
+    const targetDay = submissionDayForChallenge;
+    const targetConstituent = 0;
+    const dayBuf = Buffer.alloc(4);
+    dayBuf.writeUInt32LE(targetDay, 0);
+
+    const [challengePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [challengeBondVaultPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge_bond_vault"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [indexStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("index_state")],
+      program.programId
+    );
+
+    const challengerBalanceBefore = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+
+    await program.methods
+      .openChallenge(
+        targetDay,
+        publisherKp.publicKey,
+        targetConstituent,
+        new anchor.BN(900_000_000), // claimed_correct_price (illustrative)
+        "ipfs://bafy-test-evidence"
+      )
+      .accounts({
+        config: configPda,
+        challenger: challengerKp.publicKey,
+        indexState: indexStatePda,
+        challenge: challengePda,
+        challengerUsdcAccount: challengerUsdcAta,
+        challengeBondVault: challengeBondVaultPda,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([challengerKp])
+      .rpc();
+
+    const c = await program.account.challenge.fetch(challengePda);
+    expect(c.challenger.toBase58()).to.equal(challengerKp.publicKey.toBase58());
+    expect(c.targetPublisher.toBase58()).to.equal(publisherKp.publicKey.toBase58());
+    expect(c.targetDay).to.equal(targetDay);
+    expect(c.targetConstituent).to.equal(targetConstituent);
+    expect(c.bond.toString()).to.equal(challengeBond.toString());
+    expect(c.status).to.deep.equal({ open: {} });
+    expect(c.slashBps).to.equal(0);
+    expect(c.slashedAmount.toString()).to.equal("0");
+
+    const bondVault = await getAccount(provider.connection, challengeBondVaultPda);
+    expect(bondVault.amount.toString()).to.equal(challengeBond.toString());
+
+    const challengerBalanceAfter = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+    expect((challengerBalanceBefore - challengerBalanceAfter).toString()).to.equal(
+      challengeBond.toString()
+    );
   });
 
   it("rejects a challenge after window close", async () => {
-    // TODO: oracle.md §6.
+    // TODO: oracle.md §6 — needs clock manipulation past challenge_window_seconds.
+    // Deferred: solana-test-validator on Solana 1.18 doesn't expose a clean clock-warp,
+    // and re-running with a 1-second window would invalidate the in-window test above.
+    // The handler enforces `elapsed < window` and reverts with ChallengeWindowClosed;
+    // covered logically by the require! in open_challenge.
   });
 
   it("slashes a publisher when challenge succeeds", async () => {
-    // TODO: oracle.md §7.
+    // Spec: docs/oracle.md §7 — 10% slash tier on a >5% deviation success.
+    // Resolve the challenge opened above; verify the slash math + distribution.
+    const targetDay = submissionDayForChallenge;
+    const targetConstituent = 0;
+    const dayBuf = Buffer.alloc(4);
+    dayBuf.writeUInt32LE(targetDay, 0);
+
+    const [challengePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [challengeBondVaultPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge_bond_vault"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [publisherPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+    const [publisherBondVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bond_vault"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Snapshot balances pre-resolve.
+    const challengerBefore = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+    const treasuryBefore = (await getAccount(provider.connection, treasuryVault)).amount;
+    const publisherVaultBefore = (
+      await getAccount(provider.connection, publisherBondVaultPda)
+    ).amount;
+    expect(publisherVaultBefore.toString()).to.equal(publisherInitialBond.toString());
+
+    const slashBps = 1000; // 10% per §7 (>5% deviation tier)
+    const expectedSlashed = (publisherInitialBond * BigInt(slashBps)) / BigInt(10_000);
+    const expectedChallengerShare = expectedSlashed / BigInt(2);
+    const expectedTreasuryShare = expectedSlashed - expectedChallengerShare;
+
+    await program.methods
+      .resolveChallenge(true, slashBps)
+      .accounts({
+        config: configPda,
+        admin: provider.wallet.publicKey,
+        challenge: challengePda,
+        challengeBondVault: challengeBondVaultPda,
+        targetPublisherAccount: publisherPda,
+        targetPublisherBondVault: publisherBondVaultPda,
+        challengerUsdcAccount: challengerUsdcAta,
+        treasuryVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    // Challenge state updated.
+    const c = await program.account.challenge.fetch(challengePda);
+    expect(c.status).to.deep.equal({ succeeded: {} });
+    expect(c.slashBps).to.equal(slashBps);
+    expect(c.slashedAmount.toString()).to.equal(expectedSlashed.toString());
+    // Payout = challenger share of slash + bond refund.
+    expect(c.challengerPayout.toString()).to.equal(
+      (expectedChallengerShare + challengeBond).toString()
+    );
+
+    // Publisher bond reduced; status untouched at 10% tier (no auto-suspend).
+    const pub = await program.account.publisher.fetch(publisherPda);
+    expect(pub.bondAmount.toString()).to.equal(
+      (publisherInitialBond - expectedSlashed).toString()
+    );
+    expect(pub.successfulChallengesAgainst).to.equal(1);
+    expect(pub.status).to.deep.equal({ shadow: {} });
+
+    // Token balances: challenger gets slash share + bond refund; treasury gets remainder.
+    const challengerAfter = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+    expect((challengerAfter - challengerBefore).toString()).to.equal(
+      (expectedChallengerShare + challengeBond).toString()
+    );
+    const treasuryAfter = (await getAccount(provider.connection, treasuryVault)).amount;
+    expect((treasuryAfter - treasuryBefore).toString()).to.equal(
+      expectedTreasuryShare.toString()
+    );
+    const publisherVaultAfter = (
+      await getAccount(provider.connection, publisherBondVaultPda)
+    ).amount;
+    expect((publisherVaultBefore - publisherVaultAfter).toString()).to.equal(
+      expectedSlashed.toString()
+    );
+    // Challenge bond vault drained.
+    const cbvAfter = (await getAccount(provider.connection, challengeBondVaultPda)).amount;
+    expect(cbvAfter.toString()).to.equal("0");
+  });
+
+  it("redistributes bond 50/50 (publisher + treasury) when challenge fails", async () => {
+    // Spec: docs/oracle.md §6 — failed challenge: challenger loses bond, split 50/50
+    // between targeted publisher (compensation) and protocol treasury.
+    // Open a fresh challenge against constituent 1 to avoid the PDA collision with above.
+    const targetDay = submissionDayForChallenge;
+    const targetConstituent = 1;
+    const dayBuf = Buffer.alloc(4);
+    dayBuf.writeUInt32LE(targetDay, 0);
+
+    const [challengePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [challengeBondVaultPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge_bond_vault"),
+        challengerKp.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([targetConstituent]),
+      ],
+      program.programId
+    );
+    const [publisherPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+    const [publisherBondVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bond_vault"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+    const [indexStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("index_state")],
+      program.programId
+    );
+
+    // Open a second challenge.
+    await program.methods
+      .openChallenge(
+        targetDay,
+        publisherKp.publicKey,
+        targetConstituent,
+        new anchor.BN(1_100_000_000),
+        "ipfs://bafy-test-evidence-2"
+      )
+      .accounts({
+        config: configPda,
+        challenger: challengerKp.publicKey,
+        indexState: indexStatePda,
+        challenge: challengePda,
+        challengerUsdcAccount: challengerUsdcAta,
+        challengeBondVault: challengeBondVaultPda,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([challengerKp])
+      .rpc();
+
+    // Snapshot pre-resolve.
+    const challengerBefore = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+    const treasuryBefore = (await getAccount(provider.connection, treasuryVault)).amount;
+    const publisherVaultBefore = (
+      await getAccount(provider.connection, publisherBondVaultPda)
+    ).amount;
+    const publisherBondAmountBefore = BigInt(
+      (await program.account.publisher.fetch(publisherPda)).bondAmount.toString()
+    );
+
+    // Resolve as failed — slash_bps is ignored on the failure path; pass 0.
+    await program.methods
+      .resolveChallenge(false, 0)
+      .accounts({
+        config: configPda,
+        admin: provider.wallet.publicKey,
+        challenge: challengePda,
+        challengeBondVault: challengeBondVaultPda,
+        targetPublisherAccount: publisherPda,
+        targetPublisherBondVault: publisherBondVaultPda,
+        challengerUsdcAccount: challengerUsdcAta,
+        treasuryVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    const c = await program.account.challenge.fetch(challengePda);
+    expect(c.status).to.deep.equal({ failed: {} });
+    expect(c.slashBps).to.equal(0);
+    expect(c.slashedAmount.toString()).to.equal("0");
+    expect(c.challengerPayout.toString()).to.equal("0");
+
+    const expectedPublisherShare = challengeBond / BigInt(2);
+    const expectedTreasuryShare = challengeBond - expectedPublisherShare;
+
+    // Challenger received nothing (bond confiscated).
+    const challengerAfter = (
+      await getAccount(provider.connection, challengerUsdcAta)
+    ).amount;
+    expect((challengerAfter - challengerBefore).toString()).to.equal("0");
+
+    // Publisher's bond vault refilled by half the challenge bond.
+    const publisherVaultAfter = (
+      await getAccount(provider.connection, publisherBondVaultPda)
+    ).amount;
+    expect((publisherVaultAfter - publisherVaultBefore).toString()).to.equal(
+      expectedPublisherShare.toString()
+    );
+    // bond_amount tracks effective bond — should mirror the refill increment.
+    const publisherAfter = await program.account.publisher.fetch(publisherPda);
+    const publisherBondAmountAfter = BigInt(publisherAfter.bondAmount.toString());
+    expect((publisherBondAmountAfter - publisherBondAmountBefore).toString()).to.equal(
+      expectedPublisherShare.toString()
+    );
+
+    // Treasury received the other half.
+    const treasuryAfter = (await getAccount(provider.connection, treasuryVault)).amount;
+    expect((treasuryAfter - treasuryBefore).toString()).to.equal(
+      expectedTreasuryShare.toString()
+    );
+
+    // Challenge bond vault drained.
+    const cbvAfter = (await getAccount(provider.connection, challengeBondVaultPda)).amount;
+    expect(cbvAfter.toString()).to.equal("0");
   });
 
   it("finalizes the day after challenge window with no open challenges", async () => {
-    // TODO: oracle.md §5.
+    // TODO: oracle.md §5 — needs clock advance past challenge_window_seconds.
+    // Same blocker as the after-window challenge test.
   });
 
   it("supports emergency pause by core multisig", async () => {
-    // TODO: oracle.md §9.
+    // Spec: docs/oracle.md §9 — admin-only pause flips Config.paused, blocking submissions
+    // and challenges until unpaused.
+    await program.methods
+      .emergencyPause(1)
+      .accounts({
+        config: configPda,
+        admin: provider.wallet.publicKey,
+      })
+      .rpc();
+    let cfg = await program.account.config.fetch(configPda);
+    expect(cfg.paused).to.equal(true);
+    expect(cfg.pauseReason).to.equal(1);
+
+    await program.methods
+      .emergencyUnpause()
+      .accounts({
+        config: configPda,
+        admin: provider.wallet.publicKey,
+      })
+      .rpc();
+    cfg = await program.account.config.fetch(configPda);
+    expect(cfg.paused).to.equal(false);
+    expect(cfg.pauseReason).to.equal(0);
   });
 });

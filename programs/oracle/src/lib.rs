@@ -44,8 +44,22 @@ pub mod oracle {
         config.challenge_window_seconds = params.challenge_window_seconds;
         config.paused = false;
         config.pause_reason = 0;
+        config.protocol_treasury_vault = Pubkey::default();
         config.bump = ctx.bumps.config;
 
+        Ok(())
+    }
+
+    /// Wire the protocol treasury USDC vault (perp-engine PDA) into oracle Config.
+    /// Admin-only. Must be set before any `resolve_challenge` can succeed, since
+    /// both success and failure paths route a protocol cut into this vault.
+    /// Called post-init once the perp-engine `initialize_treasury` has run.
+    pub fn set_protocol_treasury(
+        ctx: Context<SetProtocolTreasury>,
+        treasury_vault: Pubkey,
+    ) -> Result<()> {
+        require!(treasury_vault != Pubkey::default(), OracleError::InvalidConfig);
+        ctx.accounts.config.protocol_treasury_vault = treasury_vault;
         Ok(())
     }
 
@@ -357,8 +371,9 @@ pub mod oracle {
     }
 
     /// Open a challenge against a publisher's submission for a specific (day, constituent).
-    /// v0.1 simplification: challenge metadata is recorded but bond escrow is deferred
-    /// (would need a per-challenge token vault PDA — adds significant Accounts surface).
+    /// Escrows the challenger's USDC bond into a per-challenge vault PDA. Bond either
+    /// returns to challenger (success) or gets redistributed 50/50 to the targeted
+    /// publisher's bond vault + protocol treasury (failure).
     /// Spec: docs/oracle.md §6 dispute mechanism.
     pub fn open_challenge(
         ctx: Context<OpenChallenge>,
@@ -391,6 +406,23 @@ pub mod oracle {
             OracleError::ChallengeWindowClosed
         );
 
+        let bond_amount = ctx.accounts.config.challenge_bond;
+        require!(
+            ctx.accounts.challenger_usdc_account.amount >= bond_amount,
+            OracleError::InsufficientBond
+        );
+
+        // Escrow the challenger's bond into the per-challenge vault PDA.
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.challenger_usdc_account.to_account_info(),
+            to: ctx.accounts.challenge_bond_vault.to_account_info(),
+            authority: ctx.accounts.challenger.to_account_info(),
+        };
+        token::transfer(
+            CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts),
+            bond_amount,
+        )?;
+
         let challenge = &mut ctx.accounts.challenge;
         challenge.challenger = ctx.accounts.challenger.key();
         challenge.target_publisher = target_publisher;
@@ -398,37 +430,259 @@ pub mod oracle {
         challenge.target_constituent = target_constituent;
         challenge.claimed_correct_price = claimed_correct_price;
         challenge.evidence_uri = evidence_uri;
-        challenge.bond = ctx.accounts.config.challenge_bond; // record amount; escrow TODO
+        challenge.bond = bond_amount;
         challenge.status = ChallengeStatus::Open;
         challenge.opened_at = clock.unix_timestamp;
         challenge.resolved_at = 0;
+        challenge.slash_bps = 0;
+        challenge.slashed_amount = 0;
+        challenge.challenger_payout = 0;
         challenge.bump = ctx.bumps.challenge;
         Ok(())
     }
 
-    /// Resolve an open challenge (admin-resolved in v0.1; committee multisig in v0.2).
-    /// v0.1 simplification: no slashing of the targeted publisher's bond, no bond redistribution.
-    /// Spec: docs/oracle.md §6 resolution + §7 slashing.
+    /// Resolve an open challenge (admin-resolved in v0.5; committee multisig is v0.6+).
+    ///
+    /// `slash_bps` is only meaningful when `challenge_succeeded == true`. Spec §7 tiers:
+    ///   - 1000 (10%)  → price off by >5% from corrected median, 1-month suspension
+    ///   - 5000 (50%)  → price off by >15%, 6-month suspension
+    ///   - 10000 (100%) → demonstrable collusion, permanent removal
+    /// On failure pass any value (ignored).
+    ///
+    /// **Success cash flow**:
+    ///   slashed_amount = publisher.bond_amount × slash_bps / 10_000
+    ///   - slashed_amount/2 → challenger USDC ATA
+    ///   - remainder       → protocol treasury vault
+    ///   - challenger bond refunded in full
+    ///   - publisher.bond_amount decreases; status → Suspended (≥5000) or Removed (10000)
+    ///
+    /// **Failure cash flow**: challenger bond split 50/50 → publisher bond vault (refill,
+    /// increments publisher.bond_amount) and protocol treasury vault.
+    ///
+    /// **v0.5 scope cut**: spec §7's "25% to remaining publishers" distribution on success
+    /// is rolled into the 50% treasury share (no N-publisher fan-out yet). Liveness slashing
+    /// is a separate mechanism, also deferred.
+    ///
+    /// Spec: docs/oracle.md §6 resolution + §7 slashing schedule + flow.
     pub fn resolve_challenge(
         ctx: Context<ResolveChallenge>,
         challenge_succeeded: bool,
+        slash_bps: u16,
     ) -> Result<()> {
         require!(!ctx.accounts.config.paused, OracleError::OraclePaused);
-
-        let challenge = &mut ctx.accounts.challenge;
         require!(
-            challenge.status == ChallengeStatus::Open,
+            ctx.accounts.config.protocol_treasury_vault != Pubkey::default(),
+            OracleError::TreasuryNotConfigured
+        );
+        require!(
+            ctx.accounts.treasury_vault.key() == ctx.accounts.config.protocol_treasury_vault,
+            OracleError::TreasuryVaultMismatch
+        );
+
+        // Cross-check: passed Publisher matches Challenge.target_publisher.
+        require!(
+            ctx.accounts.target_publisher_account.publisher_key
+                == ctx.accounts.challenge.target_publisher,
+            OracleError::ChallengeTargetMismatch
+        );
+        // And the Publisher's recorded bond vault matches the passed bond vault.
+        require!(
+            ctx.accounts.target_publisher_account.bond_vault
+                == ctx.accounts.target_publisher_bond_vault.key(),
+            OracleError::PublisherBondVaultMismatch
+        );
+
+        let challenge_key = ctx.accounts.challenge.key();
+        require!(
+            ctx.accounts.challenge.status == ChallengeStatus::Open,
             OracleError::InvalidIndexStatus
         );
 
+        // Reborrow challenge for fields we read in seed construction below.
+        let challenger_key = ctx.accounts.challenge.challenger;
+        let target_day = ctx.accounts.challenge.target_day;
+        let target_constituent = ctx.accounts.challenge.target_constituent;
+        let bond_amount = ctx.accounts.challenge.bond;
+
+        // Seeds for signing as the challenge bond vault PDA.
+        let day_bytes = target_day.to_le_bytes();
+        let constituent_byte = [target_constituent];
+        let cbv_bump = ctx.bumps.challenge_bond_vault;
+        let cbv_seeds: &[&[u8]] = &[
+            CHALLENGE_BOND_VAULT_SEED,
+            challenger_key.as_ref(),
+            &day_bytes,
+            &constituent_byte,
+            std::slice::from_ref(&cbv_bump),
+        ];
+        let cbv_signer = &[cbv_seeds];
+
+        // Seeds for signing as the targeted publisher bond vault PDA.
+        let publisher_key = ctx.accounts.target_publisher_account.publisher_key;
+        let publisher_bond_vault_bump = ctx.bumps.target_publisher_bond_vault;
+        let pbv_seeds: &[&[u8]] = &[
+            BOND_VAULT_SEED,
+            publisher_key.as_ref(),
+            std::slice::from_ref(&publisher_bond_vault_bump),
+        ];
+        let pbv_signer = &[pbv_seeds];
+
+        let mut slashed_amount: u64 = 0;
+        let mut challenger_payout: u64 = 0;
+        let mut effective_slash_bps: u16 = 0;
+
+        if challenge_succeeded {
+            require!(
+                slash_bps == 1_000 || slash_bps == 5_000 || slash_bps == 10_000,
+                OracleError::InvalidSlashSeverity
+            );
+
+            // Compute slash amount against the publisher's *current* effective bond.
+            let publisher_bond = ctx.accounts.target_publisher_account.bond_amount;
+            slashed_amount = (publisher_bond as u128)
+                .checked_mul(slash_bps as u128)
+                .and_then(|x| x.checked_div(10_000))
+                .ok_or(OracleError::InvalidConfig)? as u64;
+
+            if slashed_amount > 0 {
+                // Slashed funds: 50% to challenger, remainder to protocol treasury.
+                let challenger_share = slashed_amount / 2;
+                let treasury_share = slashed_amount - challenger_share;
+
+                if challenger_share > 0 {
+                    let cpi = Transfer {
+                        from: ctx.accounts.target_publisher_bond_vault.to_account_info(),
+                        to: ctx.accounts.challenger_usdc_account.to_account_info(),
+                        authority: ctx.accounts.target_publisher_bond_vault.to_account_info(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.token_program.to_account_info(),
+                            cpi,
+                            pbv_signer,
+                        ),
+                        challenger_share,
+                    )?;
+                }
+                if treasury_share > 0 {
+                    let cpi = Transfer {
+                        from: ctx.accounts.target_publisher_bond_vault.to_account_info(),
+                        to: ctx.accounts.treasury_vault.to_account_info(),
+                        authority: ctx.accounts.target_publisher_bond_vault.to_account_info(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.token_program.to_account_info(),
+                            cpi,
+                            pbv_signer,
+                        ),
+                        treasury_share,
+                    )?;
+                }
+
+                // Decrement publisher's effective bond.
+                let pub_acct = &mut ctx.accounts.target_publisher_account;
+                pub_acct.bond_amount = pub_acct
+                    .bond_amount
+                    .checked_sub(slashed_amount)
+                    .ok_or(OracleError::InvalidConfig)?;
+                pub_acct.successful_challenges_against = pub_acct
+                    .successful_challenges_against
+                    .checked_add(1)
+                    .ok_or(OracleError::InvalidConfig)?;
+
+                // Status transition per §7 schedule.
+                if slash_bps == 10_000 {
+                    pub_acct.status = PublisherStatus::Removed;
+                } else if slash_bps >= 5_000 {
+                    pub_acct.status = PublisherStatus::Suspended;
+                }
+                // 10% slash: leave status alone (warning level — caller can suspend separately).
+
+                challenger_payout = challenger_payout
+                    .checked_add(challenger_share)
+                    .ok_or(OracleError::InvalidConfig)?;
+            }
+
+            // Refund challenger's bond in full.
+            if bond_amount > 0 {
+                let cpi = Transfer {
+                    from: ctx.accounts.challenge_bond_vault.to_account_info(),
+                    to: ctx.accounts.challenger_usdc_account.to_account_info(),
+                    authority: ctx.accounts.challenge_bond_vault.to_account_info(),
+                };
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        cpi,
+                        cbv_signer,
+                    ),
+                    bond_amount,
+                )?;
+                challenger_payout = challenger_payout
+                    .checked_add(bond_amount)
+                    .ok_or(OracleError::InvalidConfig)?;
+            }
+
+            effective_slash_bps = slash_bps;
+        } else {
+            // Failed challenge: redistribute challenger bond 50/50 to publisher + treasury.
+            if bond_amount > 0 {
+                let publisher_share = bond_amount / 2;
+                let treasury_share = bond_amount - publisher_share;
+
+                if publisher_share > 0 {
+                    let cpi = Transfer {
+                        from: ctx.accounts.challenge_bond_vault.to_account_info(),
+                        to: ctx.accounts.target_publisher_bond_vault.to_account_info(),
+                        authority: ctx.accounts.challenge_bond_vault.to_account_info(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.token_program.to_account_info(),
+                            cpi,
+                            cbv_signer,
+                        ),
+                        publisher_share,
+                    )?;
+                    // Refilled stake counts toward effective bond for future slash math.
+                    let pub_acct = &mut ctx.accounts.target_publisher_account;
+                    pub_acct.bond_amount = pub_acct
+                        .bond_amount
+                        .checked_add(publisher_share)
+                        .ok_or(OracleError::InvalidConfig)?;
+                }
+                if treasury_share > 0 {
+                    let cpi = Transfer {
+                        from: ctx.accounts.challenge_bond_vault.to_account_info(),
+                        to: ctx.accounts.treasury_vault.to_account_info(),
+                        authority: ctx.accounts.challenge_bond_vault.to_account_info(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.token_program.to_account_info(),
+                            cpi,
+                            cbv_signer,
+                        ),
+                        treasury_share,
+                    )?;
+                }
+            }
+        }
+
+        let _ = challenge_key; // silence unused (reserved for emit_!)
+
+        let challenge = &mut ctx.accounts.challenge;
         challenge.resolved_at = Clock::get()?.unix_timestamp;
         challenge.status = if challenge_succeeded {
             ChallengeStatus::Succeeded
         } else {
             ChallengeStatus::Failed
         };
-        // TODO §7: slash targeted publisher's bond on success (10/50/100% based on deviation severity);
-        //          redistribute challenge bond per outcome.
+        challenge.slash_bps = effective_slash_bps;
+        challenge.slashed_amount = slashed_amount;
+        challenge.challenger_payout = challenger_payout;
+
         Ok(())
     }
 
@@ -723,7 +977,47 @@ pub struct OpenChallenge<'info> {
     )]
     pub challenge: Box<Account<'info, Challenge>>,
 
+    /// Challenger's USDC source for the bond.
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+        token::authority = challenger,
+    )]
+    pub challenger_usdc_account: Box<Account<'info, TokenAccount>>,
+
+    /// Per-challenge bond escrow PDA — created here, owned by itself.
+    #[account(
+        init,
+        payer = challenger,
+        seeds = [
+            CHALLENGE_BOND_VAULT_SEED,
+            challenger.key().as_ref(),
+            &target_day.to_le_bytes(),
+            &[target_constituent],
+        ],
+        bump,
+        token::mint = usdc_mint,
+        token::authority = challenge_bond_vault,
+    )]
+    pub challenge_bond_vault: Box<Account<'info, TokenAccount>>,
+
+    pub usdc_mint: Box<Account<'info, Mint>>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetProtocolTreasury<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ OracleError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+
+    pub admin: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -737,8 +1031,58 @@ pub struct ResolveChallenge<'info> {
 
     pub admin: Signer<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [
+            CHALLENGE_SEED,
+            challenge.challenger.as_ref(),
+            &challenge.target_day.to_le_bytes(),
+            &[challenge.target_constituent],
+        ],
+        bump = challenge.bump,
+    )]
     pub challenge: Box<Account<'info, Challenge>>,
+
+    /// Per-challenge bond escrow holding the challenger's stake.
+    #[account(
+        mut,
+        seeds = [
+            CHALLENGE_BOND_VAULT_SEED,
+            challenge.challenger.as_ref(),
+            &challenge.target_day.to_le_bytes(),
+            &[challenge.target_constituent],
+        ],
+        bump,
+    )]
+    pub challenge_bond_vault: Box<Account<'info, TokenAccount>>,
+
+    /// The targeted publisher's record — needed to read bond_amount, update on slash.
+    #[account(
+        mut,
+        seeds = [PUBLISHER_SEED, target_publisher_account.publisher_key.as_ref()],
+        bump = target_publisher_account.bump,
+    )]
+    pub target_publisher_account: Box<Account<'info, Publisher>>,
+
+    /// Publisher's bond vault — funds slashed FROM here (success) or refilled INTO it (failure).
+    #[account(
+        mut,
+        seeds = [BOND_VAULT_SEED, target_publisher_account.publisher_key.as_ref()],
+        bump,
+    )]
+    pub target_publisher_bond_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Challenger's USDC ATA — receives slashed share + bond refund on success.
+    /// On failure this account is touched only for handler symmetry; no transfer happens.
+    #[account(mut)]
+    pub challenger_usdc_account: Box<Account<'info, TokenAccount>>,
+
+    /// Protocol treasury USDC vault — validated against `config.protocol_treasury_vault`
+    /// in the handler. Note this is a perp-engine PDA; oracle has no authority over it.
+    #[account(mut)]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]

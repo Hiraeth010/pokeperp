@@ -16,6 +16,10 @@ pub struct Config {
     pub challenge_window_seconds: u32,
     pub paused: bool,
     pub pause_reason: u8,
+    /// Protocol treasury USDC vault (perp-engine PDA). Set post-init via
+    /// `set_protocol_treasury`. Slash + failed-challenge protocol cuts route here.
+    /// Zero pubkey = not configured; resolve_challenge reverts until set.
+    pub protocol_treasury_vault: Pubkey,
     pub bump: u8,
 }
 
@@ -158,7 +162,7 @@ pub enum IndexStatus {
 pub const INDEX_STATE_SEED: &[u8] = b"index_state";
 
 /// An open or resolved challenge.
-/// Spec: docs/oracle.md §6.
+/// Spec: docs/oracle.md §6 dispute mechanism, §7 slashing.
 #[account]
 #[derive(InitSpace)]
 pub struct Challenge {
@@ -173,6 +177,15 @@ pub struct Challenge {
     pub status: ChallengeStatus,
     pub opened_at: i64,
     pub resolved_at: i64,
+    /// Set on success: basis points of publisher bond slashed (one of 1000/5000/10000
+    /// per spec §7). Zero on failure or while open.
+    pub slash_bps: u16,
+    /// Set on success: absolute USDC amount transferred out of the publisher bond vault.
+    /// Zero on failure or while open.
+    pub slashed_amount: u64,
+    /// Set on resolve: amount the challenger received. Success = bond refund + 50% of slash;
+    /// failure = 0 (challenger's bond was redistributed).
+    pub challenger_payout: u64,
     pub bump: u8,
 }
 
@@ -185,3 +198,8 @@ pub enum ChallengeStatus {
 
 /// PDA seeds for challenge accounts. Each (challenger, day, constituent) tuple gets its own challenge.
 pub const CHALLENGE_SEED: &[u8] = b"challenge";
+
+/// PDA seed prefix for per-challenge bond escrow vaults:
+///   [CHALLENGE_BOND_VAULT_SEED, challenger, day, constituent]
+/// The challenger's USDC bond lives here from open_challenge to resolve_challenge.
+pub const CHALLENGE_BOND_VAULT_SEED: &[u8] = b"challenge_bond_vault";

@@ -535,8 +535,9 @@ export type Oracle = {
       "name": "openChallenge",
       "docs": [
         "Open a challenge against a publisher's submission for a specific (day, constituent).",
-        "v0.1 simplification: challenge metadata is recorded but bond escrow is deferred",
-        "(would need a per-challenge token vault PDA — adds significant Accounts surface).",
+        "Escrows the challenger's USDC bond into a per-challenge vault PDA. Bond either",
+        "returns to challenger (success) or gets redistributed 50/50 to the targeted",
+        "publisher's bond vault + protocol treasury (failure).",
         "Spec: docs/oracle.md §6 dispute mechanism."
       ],
       "discriminator": [
@@ -599,6 +600,27 @@ export type Oracle = {
         {
           "name": "challenge",
           "writable": true
+        },
+        {
+          "name": "challengerUsdcAccount",
+          "docs": [
+            "Challenger's USDC source for the bond."
+          ],
+          "writable": true
+        },
+        {
+          "name": "challengeBondVault",
+          "docs": [
+            "Per-challenge bond escrow PDA — created here, owned by itself."
+          ],
+          "writable": true
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "systemProgram",
@@ -755,9 +777,29 @@ export type Oracle = {
     {
       "name": "resolveChallenge",
       "docs": [
-        "Resolve an open challenge (admin-resolved in v0.1; committee multisig in v0.2).",
-        "v0.1 simplification: no slashing of the targeted publisher's bond, no bond redistribution.",
-        "Spec: docs/oracle.md §6 resolution + §7 slashing."
+        "Resolve an open challenge (admin-resolved in v0.5; committee multisig is v0.6+).",
+        "",
+        "`slash_bps` is only meaningful when `challenge_succeeded == true`. Spec §7 tiers:",
+        "- 1000 (10%)  → price off by >5% from corrected median, 1-month suspension",
+        "- 5000 (50%)  → price off by >15%, 6-month suspension",
+        "- 10000 (100%) → demonstrable collusion, permanent removal",
+        "On failure pass any value (ignored).",
+        "",
+        "**Success cash flow**:",
+        "slashed_amount = publisher.bond_amount × slash_bps / 10_000",
+        "- slashed_amount/2 → challenger USDC ATA",
+        "- remainder       → protocol treasury vault",
+        "- challenger bond refunded in full",
+        "- publisher.bond_amount decreases; status → Suspended (≥5000) or Removed (10000)",
+        "",
+        "**Failure cash flow**: challenger bond split 50/50 → publisher bond vault (refill,",
+        "increments publisher.bond_amount) and protocol treasury vault.",
+        "",
+        "**v0.5 scope cut**: spec §7's \"25% to remaining publishers\" distribution on success",
+        "is rolled into the 50% treasury share (no N-publisher fan-out yet). Liveness slashing",
+        "is a separate mechanism, also deferred.",
+        "",
+        "Spec: docs/oracle.md §6 resolution + §7 slashing schedule + flow."
       ],
       "discriminator": [
         81,
@@ -795,12 +837,154 @@ export type Oracle = {
         {
           "name": "challenge",
           "writable": true
+        },
+        {
+          "name": "challengeBondVault",
+          "docs": [
+            "Per-challenge bond escrow holding the challenger's stake."
+          ],
+          "writable": true
+        },
+        {
+          "name": "targetPublisherAccount",
+          "docs": [
+            "The targeted publisher's record — needed to read bond_amount, update on slash."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  117,
+                  98,
+                  108,
+                  105,
+                  115,
+                  104,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "target_publisher_account.publisher_key",
+                "account": "publisher"
+              }
+            ]
+          }
+        },
+        {
+          "name": "targetPublisherBondVault",
+          "docs": [
+            "Publisher's bond vault — funds slashed FROM here (success) or refilled INTO it (failure)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "target_publisher_account.publisher_key",
+                "account": "publisher"
+              }
+            ]
+          }
+        },
+        {
+          "name": "challengerUsdcAccount",
+          "docs": [
+            "Challenger's USDC ATA — receives slashed share + bond refund on success.",
+            "On failure this account is touched only for handler symmetry; no transfer happens."
+          ],
+          "writable": true
+        },
+        {
+          "name": "treasuryVault",
+          "docs": [
+            "Protocol treasury USDC vault — validated against `config.protocol_treasury_vault`",
+            "in the handler. Note this is a perp-engine PDA; oracle has no authority over it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [
         {
           "name": "challengeSucceeded",
           "type": "bool"
+        },
+        {
+          "name": "slashBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "setProtocolTreasury",
+      "docs": [
+        "Wire the protocol treasury USDC vault (perp-engine PDA) into oracle Config.",
+        "Admin-only. Must be set before any `resolve_challenge` can succeed, since",
+        "both success and failure paths route a protocol cut into this vault.",
+        "Called post-init once the perp-engine `initialize_treasury` has run."
+      ],
+      "discriminator": [
+        70,
+        185,
+        238,
+        193,
+        38,
+        214,
+        189,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "treasuryVault",
+          "type": "pubkey"
         }
       ]
     },
@@ -1188,6 +1372,31 @@ export type Oracle = {
       "code": 6016,
       "name": "invalidIndexStatus",
       "msg": "Index state is in unexpected status for this operation"
+    },
+    {
+      "code": 6017,
+      "name": "invalidSlashSeverity",
+      "msg": "Slash basis points must be one of 1000 (10%), 5000 (50%), or 10000 (100%)"
+    },
+    {
+      "code": 6018,
+      "name": "treasuryNotConfigured",
+      "msg": "Protocol treasury vault has not been configured on Config"
+    },
+    {
+      "code": 6019,
+      "name": "treasuryVaultMismatch",
+      "msg": "Protocol treasury vault account does not match Config"
+    },
+    {
+      "code": 6020,
+      "name": "publisherBondVaultMismatch",
+      "msg": "Publisher bond vault account does not match Publisher record"
+    },
+    {
+      "code": 6021,
+      "name": "challengeTargetMismatch",
+      "msg": "Challenge target publisher does not match passed Publisher account"
     }
   ],
   "types": [
@@ -1195,7 +1404,7 @@ export type Oracle = {
       "name": "challenge",
       "docs": [
         "An open or resolved challenge.",
-        "Spec: docs/oracle.md §6."
+        "Spec: docs/oracle.md §6 dispute mechanism, §7 slashing."
       ],
       "type": {
         "kind": "struct",
@@ -1243,6 +1452,30 @@ export type Oracle = {
           {
             "name": "resolvedAt",
             "type": "i64"
+          },
+          {
+            "name": "slashBps",
+            "docs": [
+              "Set on success: basis points of publisher bond slashed (one of 1000/5000/10000",
+              "per spec §7). Zero on failure or while open."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "slashedAmount",
+            "docs": [
+              "Set on success: absolute USDC amount transferred out of the publisher bond vault.",
+              "Zero on failure or while open."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "challengerPayout",
+            "docs": [
+              "Set on resolve: amount the challenger received. Success = bond refund + 50% of slash;",
+              "failure = 0 (challenger's bond was redistributed)."
+            ],
+            "type": "u64"
           },
           {
             "name": "bump",
@@ -1320,6 +1553,15 @@ export type Oracle = {
           {
             "name": "pauseReason",
             "type": "u8"
+          },
+          {
+            "name": "protocolTreasuryVault",
+            "docs": [
+              "Protocol treasury USDC vault (perp-engine PDA). Set post-init via",
+              "`set_protocol_treasury`. Slash + failed-challenge protocol cuts route here.",
+              "Zero pubkey = not configured; resolve_challenge reverts until set."
+            ],
+            "type": "pubkey"
           },
           {
             "name": "bump",

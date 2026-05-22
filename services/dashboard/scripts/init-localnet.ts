@@ -267,6 +267,24 @@ async function main(): Promise<void> {
       .rpc()
   );
 
+  // 7c. Wire the perp-engine treasury vault into oracle Config so
+  // resolve_challenge can route the protocol cut. Required before any
+  // challenge can be resolved.
+  console.log("\n[7c] set_protocol_treasury on oracle...");
+  const [treasuryVaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("treasury_vault")],
+    perp.programId
+  );
+  await safeRpc("set_protocol_treasury", () =>
+    oracle.methods
+      .setProtocolTreasury(treasuryVaultPda)
+      .accounts({
+        config: configPda,
+        admin: wallet.publicKey,
+      } as never)
+      .rpc()
+  );
+
   // 8. Market (oracle_index_state PDA — may not exist yet, but the Pubkey is fixed)
   console.log("\n[8] Market...");
   const [indexStatePda] = PublicKey.findProgramAddressSync(
