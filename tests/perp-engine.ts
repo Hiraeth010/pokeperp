@@ -119,15 +119,16 @@ describe("perp-engine integration", () => {
     expect(field, `${label}: insurance field/vault drift`).to.equal(vault);
   }
 
-  /** Treasury.total_received must equal treasury_vault.amount (vault is
-   *  receive-only; no withdrawal ix exists yet). */
+  /** Treasury invariant: deposited − paid_out == vault.amount, mirroring the
+   *  insurance fund's accounting. v0.4 added the paid_out side via
+   *  withdraw_treasury. */
   async function assertTreasuryConsistent(label: string) {
     const t = await perp.account.treasury.fetch(treasuryPda);
     const v = await getAccount(provider.connection, treasuryVaultPda);
-    expect(
-      BigInt(t.totalReceived.toString()),
-      `${label}: treasury field/vault drift`
-    ).to.equal(v.amount);
+    const net =
+      BigInt(t.totalReceived.toString()) -
+      BigInt(t.totalPaidOut.toString());
+    expect(net, `${label}: treasury field/vault drift`).to.equal(v.amount);
   }
 
   before(async () => {
@@ -854,12 +855,111 @@ describe("perp-engine integration", () => {
     });
   });
 
+  describe("treasury withdrawal", () => {
+    it("admin can withdraw accumulated fees from the treasury", async () => {
+      const treasuryBefore = await perp.account.treasury.fetch(treasuryPda);
+      const vaultBefore = BigInt(
+        (await getAccount(provider.connection, treasuryVaultPda)).amount
+      );
+      // Skip if there's nothing to withdraw (e.g. all prior tests had treasury
+      // funded externally and drained).
+      if (vaultBefore === 0n) {
+        return;
+      }
+
+      // Withdraw to a freshly-created USDC ATA owned by a throwaway recipient
+      // (the test doesn't care where the funds end up — just that the transfer
+      // works and accounting updates).
+      const recipient = Keypair.generate();
+      const recipientUsdc = await createAssociatedTokenAccount(
+        provider.connection,
+        payer,
+        usdcMint,
+        recipient.publicKey
+      );
+
+      const amount = vaultBefore; // drain whatever's there
+      await perp.methods
+        .withdrawTreasury(new anchor.BN(amount.toString()))
+        .accounts({
+          market: marketPda,
+          treasury: treasuryPda,
+          treasuryVault: treasuryVaultPda,
+          recipientUsdcAccount: recipientUsdc,
+          admin: provider.wallet.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      // Vault drained, total_paid_out bumped, recipient received the funds.
+      const vaultAfter = BigInt(
+        (await getAccount(provider.connection, treasuryVaultPda)).amount
+      );
+      expect(vaultAfter).to.equal(0n);
+
+      const treasuryAfter = await perp.account.treasury.fetch(treasuryPda);
+      expect(
+        BigInt(treasuryAfter.totalPaidOut.toString()) -
+          BigInt(treasuryBefore.totalPaidOut.toString())
+      ).to.equal(amount);
+
+      const recipientAmt = BigInt(
+        (await getAccount(provider.connection, recipientUsdc)).amount
+      );
+      expect(recipientAmt).to.equal(amount);
+
+      // The treasury invariant still holds (deposited − paid_out == vault).
+      await assertTreasuryConsistent("after treasury withdrawal");
+    });
+
+    it("rejects withdrawal from non-admin", async () => {
+      // Fund a non-admin signer with SOL.
+      const stranger = Keypair.generate();
+      const fundTx = new anchor.web3.Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: provider.wallet.publicKey,
+          toPubkey: stranger.publicKey,
+          lamports: LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(fundTx, []);
+
+      const recipient = Keypair.generate();
+      const recipientUsdc = await createAssociatedTokenAccount(
+        provider.connection,
+        payer,
+        usdcMint,
+        recipient.publicKey
+      );
+
+      let threw = false;
+      try {
+        await perp.methods
+          .withdrawTreasury(new anchor.BN(1))
+          .accounts({
+            market: marketPda,
+            treasury: treasuryPda,
+            treasuryVault: treasuryVaultPda,
+            recipientUsdcAccount: recipientUsdc,
+            admin: stranger.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([stranger])
+          .rpc();
+      } catch (e) {
+        threw = true;
+        // Anchor wraps as Unauthorized via the admin == market.admin constraint.
+      }
+      expect(threw, "non-admin withdrawal should revert").to.equal(true);
+    });
+  });
+
   describe("invariants", () => {
     it("insurance vault matches total_deposited − total_paid_out", async () => {
       await assertInsuranceConsistent("end-of-suite");
     });
 
-    it("treasury vault matches total_received", async () => {
+    it("treasury vault matches total_received − total_paid_out", async () => {
       await assertTreasuryConsistent("end-of-suite");
     });
   });

@@ -1714,6 +1714,128 @@ export type PerpEngine = {
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "withdrawTreasury",
+      "docs": [
+        "Admin-gated withdrawal from the protocol treasury. Transfers `amount`",
+        "from the treasury vault to a specified recipient USDC account and bumps",
+        "`total_paid_out` so the on-chain accounting stays consistent with the",
+        "vault balance (deposited − paid_out == vault.amount).",
+        "Spec: docs/perp-engine.md §9 (v0.4 governance carve-out).",
+        "",
+        "v0.4 simplification: only the Market.admin signs. A multisig / DAO",
+        "governance hook is v0.5."
+      ],
+      "discriminator": [
+        40,
+        63,
+        122,
+        158,
+        144,
+        216,
+        83,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "market",
+          "docs": [
+            "Market is read here only to enforce the admin constraint — only the",
+            "market's admin can pull treasury funds."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryVault",
+          "docs": [
+            "Source of funds; authority is the Treasury PDA, so the handler signs",
+            "the outbound transfer with [TREASURY_SEED, treasury.bump]."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "recipientUsdcAccount",
+          "docs": [
+            "Destination USDC account — admin chooses any wallet they control or a",
+            "downstream treasury manager. Constraint just pins the mint; ownership",
+            "is admin's responsibility."
+          ],
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
@@ -2192,8 +2314,10 @@ export type PerpEngine = {
       "docs": [
         "Protocol treasury — receives 90% of taker fees per spec §9 (insurance keeps",
         "the remaining 10% as a backstop reserve). v0.2 routed 100% of fees to",
-        "insurance; the split landed in v0.3. Withdrawals from this vault are",
-        "out-of-scope for v0.3 — admin governance ix is a follow-up."
+        "insurance; the 90/10 split landed in v0.3. v0.4 added `withdraw_treasury`",
+        "(admin-gated) so accumulated protocol revenue can be pulled — `total_paid_out`",
+        "tracks cumulative outflow so the on-chain field still matches vault balance",
+        "(deposited − paid_out == vault.amount)."
       ],
       "type": {
         "kind": "struct",
@@ -2204,6 +2328,10 @@ export type PerpEngine = {
           },
           {
             "name": "totalReceived",
+            "type": "u64"
+          },
+          {
+            "name": "totalPaidOut",
             "type": "u64"
           },
           {

@@ -78,13 +78,16 @@ pub struct InsuranceFund {
 
 /// Protocol treasury — receives 90% of taker fees per spec §9 (insurance keeps
 /// the remaining 10% as a backstop reserve). v0.2 routed 100% of fees to
-/// insurance; the split landed in v0.3. Withdrawals from this vault are
-/// out-of-scope for v0.3 — admin governance ix is a follow-up.
+/// insurance; the 90/10 split landed in v0.3. v0.4 added `withdraw_treasury`
+/// (admin-gated) so accumulated protocol revenue can be pulled — `total_paid_out`
+/// tracks cumulative outflow so the on-chain field still matches vault balance
+/// (deposited − paid_out == vault.amount).
 #[account]
 #[derive(InitSpace)]
 pub struct Treasury {
     pub vault: Pubkey,
     pub total_received: u64,
+    pub total_paid_out: u64,
     pub bump: u8,
 }
 

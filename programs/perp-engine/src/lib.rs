@@ -112,7 +112,45 @@ pub mod perp_engine {
         let t = &mut ctx.accounts.treasury;
         t.vault = ctx.accounts.treasury_vault.key();
         t.total_received = 0;
+        t.total_paid_out = 0;
         t.bump = ctx.bumps.treasury;
+        Ok(())
+    }
+
+    /// Admin-gated withdrawal from the protocol treasury. Transfers `amount`
+    /// from the treasury vault to a specified recipient USDC account and bumps
+    /// `total_paid_out` so the on-chain accounting stays consistent with the
+    /// vault balance (deposited − paid_out == vault.amount).
+    /// Spec: docs/perp-engine.md §9 (v0.4 governance carve-out).
+    ///
+    /// v0.4 simplification: only the Market.admin signs. A multisig / DAO
+    /// governance hook is v0.5.
+    pub fn withdraw_treasury(ctx: Context<WithdrawTreasury>, amount: u64) -> Result<()> {
+        require!(amount > 0, PerpError::InvalidConfig);
+        let treasury_vault_amount = ctx.accounts.treasury_vault.amount;
+        require!(treasury_vault_amount >= amount, PerpError::InsufficientMargin);
+
+        let bump = ctx.accounts.treasury.bump;
+        let seeds: &[&[u8]] = &[TREASURY_SEED, std::slice::from_ref(&bump)];
+        let signer_seeds: &[&[&[u8]]] = &[seeds];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.treasury_vault.to_account_info(),
+                    to: ctx.accounts.recipient_usdc_account.to_account_info(),
+                    authority: ctx.accounts.treasury.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+        )?;
+        ctx.accounts.treasury.total_paid_out = ctx
+            .accounts
+            .treasury
+            .total_paid_out
+            .checked_add(amount)
+            .ok_or(PerpError::MathOverflow)?;
         Ok(())
     }
 
@@ -1378,6 +1416,44 @@ pub struct InitializeTreasury<'info> {
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawTreasury<'info> {
+    /// Market is read here only to enforce the admin constraint — only the
+    /// market's admin can pull treasury funds.
+    #[account(
+        seeds = [MARKET_SEED],
+        bump = market.bump,
+        constraint = market.admin == admin.key() @ PerpError::Unauthorized,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    #[account(
+        mut,
+        seeds = [TREASURY_SEED],
+        bump = treasury.bump,
+    )]
+    pub treasury: Box<Account<'info, Treasury>>,
+
+    /// Source of funds; authority is the Treasury PDA, so the handler signs
+    /// the outbound transfer with [TREASURY_SEED, treasury.bump].
+    #[account(
+        mut,
+        seeds = [TREASURY_VAULT_SEED],
+        bump,
+    )]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Destination USDC account — admin chooses any wallet they control or a
+    /// downstream treasury manager. Constraint just pins the mint; ownership
+    /// is admin's responsibility.
+    #[account(mut, token::mint = treasury_vault.mint)]
+    pub recipient_usdc_account: Box<Account<'info, TokenAccount>>,
+
+    pub admin: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
