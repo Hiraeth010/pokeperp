@@ -445,7 +445,8 @@ export type PerpEngine = {
         {
           "name": "insuranceVault",
           "docs": [
-            "Insurance vault — receives loss sweeps, source of win top-ups. Authority = insurance_fund PDA."
+            "Insurance vault — receives loss sweeps + 10% close fee, source of win top-ups.",
+            "Authority = insurance_fund PDA."
           ],
           "writable": true,
           "pda": {
@@ -468,6 +469,60 @@ export type PerpEngine = {
                   117,
                   108,
                   116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryVault",
+          "docs": [
+            "Treasury vault — receives 90% close fee on close."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Treasury metadata — total_received bumped by the close-fee treasury share."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
                 ]
               }
             ]
@@ -639,6 +694,91 @@ export type PerpEngine = {
           }
         }
       ]
+    },
+    {
+      "name": "initializeTreasury",
+      "docs": [
+        "Initialize the Treasury metadata PDA and the TreasuryVault token account.",
+        "Receives the 90% protocol share of taker fees from open + close.",
+        "Spec: docs/perp-engine.md §9."
+      ],
+      "discriminator": [
+        124,
+        186,
+        211,
+        195,
+        85,
+        165,
+        129,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "liquidate",
@@ -1153,8 +1293,7 @@ export type PerpEngine = {
         {
           "name": "insuranceVault",
           "docs": [
-            "Insurance vault (receives the taker fee).",
-            "Constraint pins to market.insurance_fund via the seeded PDA derivation."
+            "Insurance vault — receives 10% of the taker fee."
           ],
           "writable": true,
           "pda": {
@@ -1208,6 +1347,60 @@ export type PerpEngine = {
                   117,
                   110,
                   100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryVault",
+          "docs": [
+            "Treasury vault — receives 90% of the taker fee (spec §9)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Treasury metadata — total_received tracks cumulative protocol-share fees."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
                 ]
               }
             ]
@@ -1574,6 +1767,19 @@ export type PerpEngine = {
         64,
         247,
         208
+      ]
+    },
+    {
+      "name": "treasury",
+      "discriminator": [
+        238,
+        239,
+        123,
+        238,
+        89,
+        1,
+        168,
+        253
       ]
     }
   ],
@@ -1973,6 +2179,32 @@ export type PerpEngine = {
           {
             "name": "openedAt",
             "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "treasury",
+      "docs": [
+        "Protocol treasury — receives 90% of taker fees per spec §9 (insurance keeps",
+        "the remaining 10% as a backstop reserve). v0.2 routed 100% of fees to",
+        "insurance; the split landed in v0.3. Withdrawals from this vault are",
+        "out-of-scope for v0.3 — admin governance ix is a follow-up."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "totalReceived",
+            "type": "u64"
           },
           {
             "name": "bump",

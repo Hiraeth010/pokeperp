@@ -439,7 +439,8 @@
         {
           "name": "insurance_vault",
           "docs": [
-            "Insurance vault — receives loss sweeps, source of win top-ups. Authority = insurance_fund PDA."
+            "Insurance vault — receives loss sweeps + 10% close fee, source of win top-ups.",
+            "Authority = insurance_fund PDA."
           ],
           "writable": true,
           "pda": {
@@ -462,6 +463,60 @@
                   117,
                   108,
                   116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_vault",
+          "docs": [
+            "Treasury vault — receives 90% close fee on close."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Treasury metadata — total_received bumped by the close-fee treasury share."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
                 ]
               }
             ]
@@ -633,6 +688,91 @@
           }
         }
       ]
+    },
+    {
+      "name": "initialize_treasury",
+      "docs": [
+        "Initialize the Treasury metadata PDA and the TreasuryVault token account.",
+        "Receives the 90% protocol share of taker fees from open + close.",
+        "Spec: docs/perp-engine.md §9."
+      ],
+      "discriminator": [
+        124,
+        186,
+        211,
+        195,
+        85,
+        165,
+        129,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "treasury",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "liquidate",
@@ -1147,8 +1287,7 @@
         {
           "name": "insurance_vault",
           "docs": [
-            "Insurance vault (receives the taker fee).",
-            "Constraint pins to market.insurance_fund via the seeded PDA derivation."
+            "Insurance vault — receives 10% of the taker fee."
           ],
           "writable": true,
           "pda": {
@@ -1202,6 +1341,60 @@
                   117,
                   110,
                   100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_vault",
+          "docs": [
+            "Treasury vault — receives 90% of the taker fee (spec §9)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Treasury metadata — total_received tracks cumulative protocol-share fees."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
                 ]
               }
             ]
@@ -1568,6 +1761,19 @@
         64,
         247,
         208
+      ]
+    },
+    {
+      "name": "Treasury",
+      "discriminator": [
+        238,
+        239,
+        123,
+        238,
+        89,
+        1,
+        168,
+        253
       ]
     }
   ],
@@ -1967,6 +2173,32 @@
           {
             "name": "opened_at",
             "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Treasury",
+      "docs": [
+        "Protocol treasury — receives 90% of taker fees per spec §9 (insurance keeps",
+        "the remaining 10% as a backstop reserve). v0.2 routed 100% of fees to",
+        "insurance; the split landed in v0.3. Withdrawals from this vault are",
+        "out-of-scope for v0.3 — admin governance ix is a follow-up."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_received",
+            "type": "u64"
           },
           {
             "name": "bump",

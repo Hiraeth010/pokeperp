@@ -76,9 +76,23 @@ pub struct InsuranceFund {
     pub bump: u8,
 }
 
+/// Protocol treasury — receives 90% of taker fees per spec §9 (insurance keeps
+/// the remaining 10% as a backstop reserve). v0.2 routed 100% of fees to
+/// insurance; the split landed in v0.3. Withdrawals from this vault are
+/// out-of-scope for v0.3 — admin governance ix is a follow-up.
+#[account]
+#[derive(InitSpace)]
+pub struct Treasury {
+    pub vault: Pubkey,
+    pub total_received: u64,
+    pub bump: u8,
+}
+
 /// PDA seeds.
 pub const MARKET_SEED: &[u8] = b"market";
 pub const INSURANCE_FUND_SEED: &[u8] = b"insurance_fund";
 pub const INSURANCE_VAULT_SEED: &[u8] = b"insurance_vault";
+pub const TREASURY_SEED: &[u8] = b"treasury";
+pub const TREASURY_VAULT_SEED: &[u8] = b"treasury_vault";
 pub const POSITION_SEED: &[u8] = b"position";
 pub const MARGIN_VAULT_SEED: &[u8] = b"margin_vault";

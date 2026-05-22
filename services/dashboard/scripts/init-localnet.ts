@@ -253,6 +253,20 @@ async function main(): Promise<void> {
       .rpc()
   );
 
+  // 7b. Treasury — receives 90% of taker fees per spec §9.
+  console.log("\n[7b] Treasury + Vault...");
+  await safeRpc("initialize_treasury", () =>
+    perp.methods
+      .initializeTreasury()
+      .accounts({
+        usdcMint,
+        admin: wallet.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      } as never)
+      .rpc()
+  );
+
   // 8. Market (oracle_index_state PDA — may not exist yet, but the Pubkey is fixed)
   console.log("\n[8] Market...");
   const [indexStatePda] = PublicKey.findProgramAddressSync(

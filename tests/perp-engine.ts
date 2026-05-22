@@ -60,6 +60,14 @@ describe("perp-engine integration", () => {
     [Buffer.from("insurance_vault")],
     perp.programId
   );
+  const [treasuryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("treasury")],
+    perp.programId
+  );
+  const [treasuryVaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("treasury_vault")],
+    perp.programId
+  );
   const [indexStatePda] = PublicKey.findProgramAddressSync(
     [Buffer.from("index_state")],
     oracle.programId
@@ -109,6 +117,17 @@ describe("perp-engine integration", () => {
     const field = await netInsurance();
     const vault = await vaultBalance();
     expect(field, `${label}: insurance field/vault drift`).to.equal(vault);
+  }
+
+  /** Treasury.total_received must equal treasury_vault.amount (vault is
+   *  receive-only; no withdrawal ix exists yet). */
+  async function assertTreasuryConsistent(label: string) {
+    const t = await perp.account.treasury.fetch(treasuryPda);
+    const v = await getAccount(provider.connection, treasuryVaultPda);
+    expect(
+      BigInt(t.totalReceived.toString()),
+      `${label}: treasury field/vault drift`
+    ).to.equal(v.amount);
   }
 
   before(async () => {
@@ -185,6 +204,26 @@ describe("perp-engine integration", () => {
       expect(fund.vault.toBase58()).to.equal(insuranceVaultPda.toBase58());
     });
 
+    it("initializes the treasury (idempotent)", async () => {
+      try {
+        await perp.methods
+          .initializeTreasury()
+          .accounts({
+            treasury: treasuryPda,
+            treasuryVault: treasuryVaultPda,
+            usdcMint,
+            admin: provider.wallet.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      } catch (_e) {
+        // Already initialized from a prior run.
+      }
+      const t = await perp.account.treasury.fetch(treasuryPda);
+      expect(t.vault.toBase58()).to.equal(treasuryVaultPda.toBase58());
+    });
+
     it("initializes the market against oracle's real IndexState (idempotent)", async () => {
       try {
         await perp.methods
@@ -221,8 +260,6 @@ describe("perp-engine integration", () => {
 
   // Shared state across trading tests.
   let openSig: string;
-  let postOpenInsuranceField: bigint;
-  let postOpenInsuranceVault: bigint;
   let postOpenMarginVault: bigint;
 
   describe("trading lifecycle", () => {
@@ -240,6 +277,8 @@ describe("perp-engine integration", () => {
       const traderBefore = (await getAccount(provider.connection, traderUsdcAta))
         .amount;
 
+      const treasuryBefore = await perp.account.treasury.fetch(treasuryPda);
+
       openSig = await perp.methods
         .openPosition(size, margin)
         .accounts({
@@ -250,6 +289,8 @@ describe("perp-engine integration", () => {
           traderUsdcAccount: traderUsdcAta,
           insuranceVault: insuranceVaultPda,
           insuranceFund: insuranceFundPda,
+          treasuryVault: treasuryVaultPda,
+          treasury: treasuryPda,
           usdcMint,
           indexState: indexStatePda,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -257,6 +298,15 @@ describe("perp-engine integration", () => {
         })
         .signers([trader])
         .rpc();
+
+      // 90/10 split: treasury gets 9 USDC, insurance gets 1 USDC of the 10 USDC fee.
+      const expectedTreasuryShare = (takerFee * 9n) / 10n;
+      const expectedInsuranceShare = takerFee - expectedTreasuryShare;
+      const treasuryAfter = await perp.account.treasury.fetch(treasuryPda);
+      expect(
+        BigInt(treasuryAfter.totalReceived.toString()) -
+          BigInt(treasuryBefore.totalReceived.toString())
+      ).to.equal(expectedTreasuryShare);
 
       // Position written
       const position = await perp.account.position.fetch(positionPda);
@@ -285,20 +335,14 @@ describe("perp-engine integration", () => {
       const markAfter = BigInt(market.markTwap1H.toString());
       expect(markAfter > markBefore).to.equal(true);
 
-      // Insurance vault got the taker fee + total_deposited bumped by the same.
-      const insVault = (await getAccount(provider.connection, insuranceVaultPda))
-        .amount;
+      // Insurance got the 10% share + total_deposited bumped accordingly.
       const insField = await perp.account.insuranceFund.fetch(insuranceFundPda);
-      const vaultDelta = insVault - BigInt(0); // can't subtract pre because we didn't capture
-      // Instead: confirm total_deposited delta = takerFee
       expect(
         BigInt(insField.totalDeposited.toString()) -
           BigInt(fundBefore.totalDeposited.toString())
-      ).to.equal(takerFee);
-      // And the vault gained at least takerFee (could be more if other tests ran).
-      expect(vaultDelta >= takerFee).to.equal(true);
+      ).to.equal(expectedInsuranceShare);
 
-      // Trader paid margin + taker_fee out of their ATA.
+      // Trader paid margin + full takerFee out of their ATA.
       const traderAfter = (await getAccount(provider.connection, traderUsdcAta))
         .amount;
       expect(traderBefore - traderAfter).to.equal(
@@ -306,9 +350,8 @@ describe("perp-engine integration", () => {
       );
 
       await assertInsuranceConsistent("after open");
+      await assertTreasuryConsistent("after open");
       postOpenMarginVault = BigInt(marginVault.amount);
-      postOpenInsuranceField = BigInt(insField.totalDeposited.toString());
-      postOpenInsuranceVault = insVault;
     });
 
     it("adds margin to the open position", async () => {
@@ -355,6 +398,7 @@ describe("perp-engine integration", () => {
       expect(delta === BigInt(withdraw.toString())).to.equal(true);
       postOpenMarginVault = BigInt(marginVault.amount);
       await assertInsuranceConsistent("after withdraw_margin");
+      await assertTreasuryConsistent("after withdraw_margin");
     });
 
     it("modifies position size and updates funding snapshot + TWAPs", async () => {
@@ -404,6 +448,7 @@ describe("perp-engine integration", () => {
       expect(mark5MinDelta >= mark1hDelta).to.equal(true);
 
       await assertInsuranceConsistent("after modify_position");
+      await assertTreasuryConsistent("after modify_position");
     });
 
     it("closes position with realized PnL routed through insurance", async () => {
@@ -428,6 +473,8 @@ describe("perp-engine integration", () => {
           .toString()
       );
 
+      const treasuryBefore = await perp.account.treasury.fetch(treasuryPda);
+
       await perp.methods
         .closePosition()
         .accounts({
@@ -439,11 +486,22 @@ describe("perp-engine integration", () => {
           usdcMint,
           insuranceFund: insuranceFundPda,
           insuranceVault: insuranceVaultPda,
+          treasuryVault: treasuryVaultPda,
+          treasury: treasuryPda,
           indexState: indexStatePda,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([trader])
         .rpc();
+
+      // Close fee split: 90% treasury, 10% insurance. The total close fee is
+      // |size| × taker_fee_bps / 10_000.
+      const expectedTreasuryShare = (closeFee * 9n) / 10n;
+      const treasuryAfter = await perp.account.treasury.fetch(treasuryPda);
+      expect(
+        BigInt(treasuryAfter.totalReceived.toString()) -
+          BigInt(treasuryBefore.totalReceived.toString())
+      ).to.equal(expectedTreasuryShare);
 
       // Position + margin vault both closed; reading them throws.
       let positionStillExists = true;
@@ -481,16 +539,22 @@ describe("perp-engine integration", () => {
       const insDelta =
         BigInt(fundAfter.totalDeposited.toString()) -
         BigInt(fundBefore.totalDeposited.toString());
-      // Insurance gained at least the close fee.
-      expect(insDelta >= closeFee).to.equal(true);
+      // Insurance gained at least the 10% close fee share.
+      const expectedInsuranceShare = closeFee - expectedTreasuryShare;
+      expect(insDelta >= expectedInsuranceShare).to.equal(true);
 
       await assertInsuranceConsistent("after close_position");
+      await assertTreasuryConsistent("after close_position");
     });
   });
 
   describe("invariants", () => {
     it("insurance vault matches total_deposited − total_paid_out", async () => {
       await assertInsuranceConsistent("end-of-suite");
+    });
+
+    it("treasury vault matches total_received", async () => {
+      await assertTreasuryConsistent("end-of-suite");
     });
   });
 });

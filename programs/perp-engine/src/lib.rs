@@ -105,6 +105,17 @@ pub mod perp_engine {
         Ok(())
     }
 
+    /// Initialize the Treasury metadata PDA and the TreasuryVault token account.
+    /// Receives the 90% protocol share of taker fees from open + close.
+    /// Spec: docs/perp-engine.md §9.
+    pub fn initialize_treasury(ctx: Context<InitializeTreasury>) -> Result<()> {
+        let t = &mut ctx.accounts.treasury;
+        t.vault = ctx.accounts.treasury_vault.key();
+        t.total_received = 0;
+        t.bump = ctx.bumps.treasury;
+        Ok(())
+    }
+
     /// Open a new perp position.
     /// Spec: docs/perp-engine.md §3 (trade execution), §5 (margin), §9 (caps).
     pub fn open_position(ctx: Context<OpenPosition>, size: i64, margin: u64) -> Result<()> {
@@ -182,9 +193,32 @@ pub mod perp_engine {
             margin,
         )?;
 
-        // Move taker fee to the insurance vault.
-        // Spec §9 says 90% protocol treasury / 10% insurance; v0.2 simplification: 100% insurance.
-        // TODO: split when a protocol treasury account exists.
+        // Split the taker fee 90% protocol treasury / 10% insurance per spec §9.
+        // v0.3 replaced the v0.2 "100% to insurance" simplification.
+        let treasury_fee = taker_fee
+            .checked_mul(9)
+            .and_then(|x| x.checked_div(10))
+            .ok_or(PerpError::MathOverflow)?;
+        let insurance_fee = taker_fee
+            .checked_sub(treasury_fee)
+            .ok_or(PerpError::MathOverflow)?;
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.trader_usdc_account.to_account_info(),
+                    to: ctx.accounts.treasury_vault.to_account_info(),
+                    authority: ctx.accounts.trader.to_account_info(),
+                },
+            ),
+            treasury_fee,
+        )?;
+        ctx.accounts.treasury.total_received = ctx
+            .accounts
+            .treasury
+            .total_received
+            .checked_add(treasury_fee)
+            .ok_or(PerpError::MathOverflow)?;
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -194,13 +228,13 @@ pub mod perp_engine {
                     authority: ctx.accounts.trader.to_account_info(),
                 },
             ),
-            taker_fee,
+            insurance_fee,
         )?;
         ctx.accounts.insurance_fund.total_deposited = ctx
             .accounts
             .insurance_fund
             .total_deposited
-            .checked_add(taker_fee)
+            .checked_add(insurance_fee)
             .ok_or(PerpError::MathOverflow)?;
 
         // Write Position.
@@ -494,20 +528,62 @@ pub mod perp_engine {
             position.size,
         )?;
 
-        // Close-side taker fee: |size| × fee_bps. Folded into PnL so the existing
-        // insurance-mediated settlement below routes the fee to the insurance vault
-        // automatically (it shows up as a "loss" the trader pays via reduced payout).
-        // Spec §9: 90% protocol / 10% insurance — v0.2 simplification: 100% insurance
-        // until a treasury account exists.
-        let close_fee = (abs_size as u128)
+        // Close-side taker fee: |size| × fee_bps, split 90/10 per spec §9. The
+        // treasury share moves out of the margin vault directly via a PDA-signed
+        // SPL transfer (position PDA is the margin vault authority); the insurance
+        // share folds into pnl so the existing insurance-mediated settlement
+        // below routes it through the standard top-up / sweep path.
+        let close_fee_total: u64 = (abs_size as u128)
             .checked_mul(ctx.accounts.market.taker_fee_bps as u128)
             .and_then(|x| x.checked_div(10_000))
-            .ok_or(PerpError::MathOverflow)? as i128;
-        let pnl = price_pnl
-            .checked_sub(funding_owed)
-            .and_then(|x| x.checked_sub(close_fee))
+            .ok_or(PerpError::MathOverflow)? as u64;
+        let close_fee_treasury = close_fee_total
+            .checked_mul(9)
+            .and_then(|x| x.checked_div(10))
+            .ok_or(PerpError::MathOverflow)?;
+        let close_fee_insurance = close_fee_total
+            .checked_sub(close_fee_treasury)
             .ok_or(PerpError::MathOverflow)?;
 
+        // Transfer the treasury share now so it's out of the vault before the
+        // settlement math below reads `margin`. Signed by position PDA.
+        if close_fee_treasury > 0 {
+            let trader_key_ = ctx.accounts.trader.key();
+            let market_key_ = ctx.accounts.market.key();
+            let position_bump_ = position.bump;
+            let position_seeds_: &[&[u8]] = &[
+                POSITION_SEED,
+                trader_key_.as_ref(),
+                market_key_.as_ref(),
+                std::slice::from_ref(&position_bump_),
+            ];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.margin_vault.to_account_info(),
+                        to: ctx.accounts.treasury_vault.to_account_info(),
+                        authority: ctx.accounts.position.to_account_info(),
+                    },
+                    &[position_seeds_],
+                ),
+                close_fee_treasury,
+            )?;
+            ctx.accounts.treasury.total_received = ctx
+                .accounts
+                .treasury
+                .total_received
+                .checked_add(close_fee_treasury)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+
+        let pnl = price_pnl
+            .checked_sub(funding_owed)
+            .and_then(|x| x.checked_sub(close_fee_insurance as i128))
+            .ok_or(PerpError::MathOverflow)?;
+
+        // Reload margin vault — treasury transfer above debited it.
+        ctx.accounts.margin_vault.reload()?;
         let margin = ctx.accounts.margin_vault.amount;
         let payout_signed = (margin as i128)
             .checked_add(pnl)
@@ -1275,6 +1351,36 @@ pub struct InitializeInsuranceFund<'info> {
 }
 
 #[derive(Accounts)]
+pub struct InitializeTreasury<'info> {
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Treasury::INIT_SPACE,
+        seeds = [TREASURY_SEED],
+        bump,
+    )]
+    pub treasury: Box<Account<'info, Treasury>>,
+
+    #[account(
+        init,
+        payer = admin,
+        seeds = [TREASURY_VAULT_SEED],
+        bump,
+        token::mint = usdc_mint,
+        token::authority = treasury,
+    )]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    pub usdc_mint: Box<Account<'info, Mint>>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct OpenPosition<'info> {
     // Heavy accounts are Box'd to keep `try_accounts` stack frame under Solana's 4KB cap.
     #[account(mut, seeds = [MARKET_SEED], bump = market.bump)]
@@ -1309,8 +1415,7 @@ pub struct OpenPosition<'info> {
     #[account(mut, token::mint = usdc_mint, token::authority = trader)]
     pub trader_usdc_account: Box<Account<'info, TokenAccount>>,
 
-    /// Insurance vault (receives the taker fee).
-    /// Constraint pins to market.insurance_fund via the seeded PDA derivation.
+    /// Insurance vault — receives 10% of the taker fee.
     #[account(
         mut,
         seeds = [INSURANCE_VAULT_SEED],
@@ -1326,6 +1431,22 @@ pub struct OpenPosition<'info> {
         bump = insurance_fund.bump,
     )]
     pub insurance_fund: Box<Account<'info, InsuranceFund>>,
+
+    /// Treasury vault — receives 90% of the taker fee (spec §9).
+    #[account(
+        mut,
+        seeds = [TREASURY_VAULT_SEED],
+        bump,
+    )]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Treasury metadata — total_received tracks cumulative protocol-share fees.
+    #[account(
+        mut,
+        seeds = [TREASURY_SEED],
+        bump = treasury.bump,
+    )]
+    pub treasury: Box<Account<'info, Treasury>>,
 
     pub usdc_mint: Box<Account<'info, Mint>>,
 
@@ -1434,13 +1555,30 @@ pub struct ClosePosition<'info> {
     )]
     pub insurance_fund: Box<Account<'info, InsuranceFund>>,
 
-    /// Insurance vault — receives loss sweeps, source of win top-ups. Authority = insurance_fund PDA.
+    /// Insurance vault — receives loss sweeps + 10% close fee, source of win top-ups.
+    /// Authority = insurance_fund PDA.
     #[account(
         mut,
         seeds = [INSURANCE_VAULT_SEED],
         bump,
     )]
     pub insurance_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Treasury vault — receives 90% close fee on close.
+    #[account(
+        mut,
+        seeds = [TREASURY_VAULT_SEED],
+        bump,
+    )]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Treasury metadata — total_received bumped by the close-fee treasury share.
+    #[account(
+        mut,
+        seeds = [TREASURY_SEED],
+        bump = treasury.bump,
+    )]
+    pub treasury: Box<Account<'info, Treasury>>,
 
     #[account(
         constraint = index_state.key() == market.oracle_index_state @ PerpError::OracleStale,
