@@ -310,6 +310,9 @@ async function main(): Promise<void> {
         liquidationPenaltyBps: 150,
         maxOiPerSide: new BN(500_000_000_000),
         maxPositionPerTrader: new BN(50_000_000_000),
+        // v0.7 ADL governance.
+        maxPositionsPerSide: 25,
+        adlHaircutBps: 5000, // retain 50% of ADL'd trader's PnL to recap insurance
       })
       .accounts({
         usdcMint,

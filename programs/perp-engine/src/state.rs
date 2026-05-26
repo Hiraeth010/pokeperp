@@ -45,6 +45,22 @@ pub struct Market {
     pub pause_reason: u8,
     pub mark_deviation_exceeded_since: i64,
 
+    // ADL governance (v0.7). `long_position_count` / `short_position_count`
+    // are incremented on open and decremented on close/liquidate/auto_deleverage
+    // so auto_deleverage can require a deterministic N = count − 1 witness set
+    // ("candidate is the globally highest-PnL position on its side IFF every
+    // other position on the side has lower PnL"). `max_positions_per_side`
+    // bounds N so the witness list fits in a single Solana transaction
+    // (~25 max with current packet limits; raise via ALTs in Phase 2+).
+    // `adl_haircut_bps` is the share of the deleveraged trader's positive PnL
+    // that insurance keeps instead of paying out — this is what actually
+    // recapitalizes the fund on ADL. 0 = no haircut (legacy behavior),
+    // 10_000 = full PnL retention.
+    pub long_position_count: u32,
+    pub short_position_count: u32,
+    pub max_positions_per_side: u32,
+    pub adl_haircut_bps: u16,
+
     pub bump: u8,
 }
 

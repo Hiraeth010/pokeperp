@@ -45,6 +45,12 @@ pub mod perp_engine {
         );
         // slippage_factor: stored as ×1e6 (100_000 = 0.10 = 10%). Cap at 1e6 (100%).
         require!(params.slippage_factor <= 1_000_000, PerpError::InvalidConfig);
+        // v0.7 ADL params.
+        require!(
+            params.max_positions_per_side > 0 && params.max_positions_per_side <= 25,
+            PerpError::InvalidConfig
+        );
+        require!(params.adl_haircut_bps <= 10_000, PerpError::InvalidConfig);
 
         let now = Clock::get()?.unix_timestamp;
 
@@ -86,6 +92,12 @@ pub mod perp_engine {
         market.funding_paused = false;
         market.pause_reason = 0;
         market.mark_deviation_exceeded_since = 0;
+
+        // v0.7 ADL governance.
+        market.long_position_count = 0;
+        market.short_position_count = 0;
+        market.max_positions_per_side = params.max_positions_per_side;
+        market.adl_haircut_bps = params.adl_haircut_bps;
 
         market.bump = ctx.bumps.market;
 
@@ -185,6 +197,25 @@ pub mod perp_engine {
             require!(new <= market.max_oi_per_side, PerpError::OICapExceeded);
             (market.long_oi, new)
         };
+
+        // v0.7 per-side position-count cap (caps auto_deleverage witness-list
+        // size to a transaction-feasible N). Modify keeps a position on the
+        // same side so it doesn't move counts; open is the only entry path.
+        let new_side_count: u32 = if is_long {
+            market
+                .long_position_count
+                .checked_add(1)
+                .ok_or(PerpError::PositionLimitExceeded)?
+        } else {
+            market
+                .short_position_count
+                .checked_add(1)
+                .ok_or(PerpError::PositionLimitExceeded)?
+        };
+        require!(
+            new_side_count <= market.max_positions_per_side,
+            PerpError::PositionLimitExceeded
+        );
 
         // Cross-program read: pull the oracle's current index value.
         let index_state = &ctx.accounts.index_state;
@@ -294,6 +325,11 @@ pub mod perp_engine {
         // Commit market OI updates.
         market.long_oi = new_long_oi;
         market.short_oi = new_short_oi;
+        if is_long {
+            market.long_position_count = new_side_count;
+        } else {
+            market.short_position_count = new_side_count;
+        }
 
         // Mark TWAPs reflect the post-trade observation.
         update_mark_twaps(market, mark_price)?;
@@ -751,6 +787,12 @@ pub mod perp_engine {
         let market = &mut ctx.accounts.market;
         market.long_oi = new_long_oi;
         market.short_oi = new_short_oi;
+        // v0.7 position-count decrement (paired with the open-side increment).
+        if is_long {
+            market.long_position_count = market.long_position_count.saturating_sub(1);
+        } else {
+            market.short_position_count = market.short_position_count.saturating_sub(1);
+        }
 
         // Mark TWAPs reflect the post-close observation.
         update_mark_twaps(market, close_mark_price)?;
@@ -1114,8 +1156,10 @@ pub mod perp_engine {
         let market = &mut ctx.accounts.market;
         if is_long {
             market.long_oi = market.long_oi.saturating_sub(abs_size);
+            market.long_position_count = market.long_position_count.saturating_sub(1);
         } else {
             market.short_oi = market.short_oi.saturating_sub(abs_size);
+            market.short_position_count = market.short_position_count.saturating_sub(1);
         }
         Ok(())
     }
@@ -1176,29 +1220,43 @@ pub mod perp_engine {
         Ok(())
     }
 
-    /// Force-close a profitable position when the insurance fund is below floor.
+    /// Force-close a high-PnL position when the insurance fund is below floor.
     /// Spec: docs/perp-engine.md §8.
     ///
-    /// Ranking is enforced via witness positions passed in `remaining_accounts`:
-    /// every witness must be on the SAME side as the candidate, belong to this
-    /// market, and have a strictly lower current PnL (computed at the same
-    /// index_price snapshot). v0.4 requires ≥ 1 witness — this gives a
-    /// probabilistic "candidate is high-ranked" guarantee, not "globally
-    /// highest". The off-chain crank picks N witnesses to make the proof
-    /// statistically convincing; v0.5 could require N ≥ K with K tied to the
-    /// total open-position count.
+    /// v0.7 changes (replaces v0.4-v0.6 probabilistic ADL):
     ///
-    /// v0.4 simplifications carried over from v0.1:
-    /// - Closes at current index price (no mark slippage), no penalty.
-    /// - Pays out margin + pnl to the ADL'd trader (no haircut — a v0.5
-    ///   improvement is to haircut the payout to actually restore insurance).
+    /// 1. **Deterministic N-witness ranking.** The caller MUST pass exactly
+    ///    `same_side_count − 1` witness positions in `remaining_accounts`,
+    ///    where `same_side_count` is `market.long_position_count` (long
+    ///    candidate) or `short_position_count` (short candidate). Each witness
+    ///    must be (a) a Position owned by this program, (b) belong to this
+    ///    market, (c) be on the candidate's side, (d) have current PnL ≤
+    ///    candidate's PnL at the same index_price, and (e) belong to a
+    ///    different trader than the candidate and every other witness.
+    ///    This proves the candidate is the globally-highest-PnL open position
+    ///    on its side — no off-chain trust required.
+    ///
+    /// 2. **Insurance-mediated payout with haircut.** When `pnl > 0`, the
+    ///    payout the trader would otherwise receive is haircut by
+    ///    `market.adl_haircut_bps`. The remainder is topped up from the
+    ///    insurance vault (capped at vault balance — shortfall emits
+    ///    `InsuranceShortfall { kind: 3 }`). The haircut amount NEVER leaves
+    ///    insurance, so the fund is recapitalized by exactly that amount per
+    ///    ADL call. When `pnl ≤ 0`, no haircut; residual margin loss is swept
+    ///    to insurance (additional recap).
+    ///
+    /// 3. **Fixed margin vault accounting.** Pre-v0.7 the code attempted to
+    ///    pay `margin + pnl` from `margin_vault` which only holds `margin` —
+    ///    the transfer would fail for any winning candidate. v0.7 routes the
+    ///    pnl top-up through insurance → margin_vault BEFORE the trader
+    ///    payout so all transfers respect actual balances.
     pub fn auto_deleverage(ctx: Context<AutoDeleverage>) -> Result<()> {
-        // Insurance below floor — entry condition for ADL
+        // Insurance below floor — entry condition for ADL.
         let fund = &ctx.accounts.insurance_fund;
         let fund_balance = fund.total_deposited.saturating_sub(fund.total_paid_out);
         require!(fund_balance < fund.floor, PerpError::InsuranceBelowFloor);
 
-        // Oracle index
+        // Oracle index.
         let index_state = &ctx.accounts.index_state;
         require!(
             index_state.status == IndexStatus::Provisional
@@ -1212,30 +1270,41 @@ pub mod perp_engine {
         let entry_mark = ctx.accounts.position.entry_mark_price;
         require!(entry_mark > 0, PerpError::MathOverflow);
 
-        // PnL at index price (no mark slippage for ADL — fair value)
+        // PnL at index price (no mark slippage for ADL — fair value).
         let price_delta = (index_price as i128) - (entry_mark as i128);
         let pnl = (position_size as i128)
             .checked_mul(price_delta)
             .and_then(|x| x.checked_div(entry_mark as i128))
             .ok_or(PerpError::MathOverflow)?;
 
-        // ----- ADL ranking: candidate.pnl ≥ every witness.pnl -----
-        // Witness positions live in remaining_accounts. Each must:
-        //   1. Be owned by this program (manual check; bypassing Anchor's
-        //      Account<> wrapper because its lifetime requirements don't play
-        //      well with remaining_accounts iteration here).
-        //   2. Pass the 8-byte Position discriminator (try_deserialize_unchecked
-        //      validates the discriminator).
-        //   3. Belong to this same market.
-        //   4. Be on the same side as the candidate (sign of size).
-        //   5. Have strictly lower current PnL at the same index_price.
-        // Reject if no witnesses are passed.
-        require!(
-            !ctx.remaining_accounts.is_empty(),
-            PerpError::ADLRankingFailed
-        );
+        // ----- Deterministic N-witness ranking (v0.7) -----
+        // Required witness count = same-side count − 1 ("everyone else on this
+        // side has lower PnL"). Witness uniqueness is enforced by collecting
+        // trader pubkeys into a small linear-scan set; the candidate's own
+        // trader pubkey is seeded so candidate-in-witnesses is rejected
+        // automatically.
         let candidate_is_long = position_size > 0;
         let market_key = ctx.accounts.market.key();
+        let same_side_count = if candidate_is_long {
+            ctx.accounts.market.long_position_count
+        } else {
+            ctx.accounts.market.short_position_count
+        };
+        // same_side_count must be ≥ 1 because the candidate itself is on the
+        // side — guard underflow defensively.
+        require!(same_side_count >= 1, PerpError::ADLRankingFailed);
+        let required_witnesses = (same_side_count - 1) as usize;
+        require!(
+            ctx.remaining_accounts.len() == required_witnesses,
+            PerpError::ADLWitnessCountMismatch
+        );
+
+        // Seed dedup set with candidate trader so a witness with the same
+        // trader-pubkey is rejected as a duplicate.
+        let candidate_trader = ctx.accounts.trader.key();
+        let mut seen_traders: Vec<Pubkey> = Vec::with_capacity(required_witnesses + 1);
+        seen_traders.push(candidate_trader);
+
         for witness_info in ctx.remaining_accounts.iter() {
             require!(
                 witness_info.owner == &crate::ID,
@@ -1252,10 +1321,14 @@ pub mod perp_engine {
                 witness_is_long == candidate_is_long,
                 PerpError::ADLRankingFailed
             );
+            require!(witness.entry_mark_price > 0, PerpError::ADLRankingFailed);
+            // Uniqueness: trader pubkey must not have been seen (which also
+            // covers candidate-in-witnesses since we seeded with candidate).
             require!(
-                witness.entry_mark_price > 0,
-                PerpError::ADLRankingFailed
+                !seen_traders.contains(&witness.trader),
+                PerpError::ADLDuplicateWitness
             );
+            seen_traders.push(witness.trader);
             let witness_delta =
                 (index_price as i128) - (witness.entry_mark_price as i128);
             let witness_pnl = (witness.size as i128)
@@ -1265,25 +1338,90 @@ pub mod perp_engine {
             require!(pnl >= witness_pnl, PerpError::ADLRankingFailed);
         }
 
-        let margin = ctx.accounts.margin_vault.amount;
-        let payout = ((margin as i128)
-            .checked_add(pnl)
-            .ok_or(PerpError::MathOverflow)?)
-        .max(0) as u64;
+        // ----- Insurance top-up with haircut (v0.7) -----
+        // Compute the gross PnL owed (positive side only), apply the haircut,
+        // then cap at insurance balance. Whatever insurance doesn't pay stays
+        // in the fund: positive `haircut` retains funds that would otherwise
+        // be paid out, and `shortfall` is the further unpayable remainder the
+        // off-chain crank could not balance.
+        let adl_haircut_bps = ctx.accounts.market.adl_haircut_bps as u128;
+        let mut topup_from_insurance: u64 = 0;
+        let mut haircut_retained: u64 = 0;
+        if pnl > 0 {
+            let pnl_u = pnl as u64;
+            haircut_retained = ((pnl_u as u128) * adl_haircut_bps / 10_000) as u64;
+            let pnl_after_haircut = pnl_u
+                .checked_sub(haircut_retained)
+                .ok_or(PerpError::MathOverflow)?;
+            let available = ctx.accounts.insurance_vault.amount;
+            topup_from_insurance = pnl_after_haircut.min(available);
+            let shortfall = pnl_after_haircut - topup_from_insurance;
+            if shortfall > 0 {
+                emit!(InsuranceShortfall {
+                    trader: candidate_trader,
+                    market: market_key,
+                    kind: 3,
+                    owed: pnl_after_haircut,
+                    paid: topup_from_insurance,
+                    shortfall,
+                });
+            }
+        }
 
-        // PDA-signed transfer
-        let trader_key = ctx.accounts.trader.key();
-        let market_key = ctx.accounts.market.key();
+        // PDA seeds — position PDA signs margin-vault outbound; insurance fund
+        // PDA signs insurance-vault outbound.
         let position_bump = ctx.accounts.position.bump;
-        let seeds: &[&[u8]] = &[
+        let position_seeds: &[&[u8]] = &[
             POSITION_SEED,
-            trader_key.as_ref(),
+            candidate_trader.as_ref(),
             market_key.as_ref(),
             std::slice::from_ref(&position_bump),
         ];
-        let signer_seeds: &[&[&[u8]]] = &[seeds];
+        let position_signer: &[&[&[u8]]] = &[position_seeds];
 
-        if payout > 0 {
+        if topup_from_insurance > 0 {
+            let fund_bump = ctx.accounts.insurance_fund.bump;
+            let fund_seeds: &[&[u8]] =
+                &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+            let fund_signer: &[&[&[u8]]] = &[fund_seeds];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.insurance_vault.to_account_info(),
+                        to: ctx.accounts.margin_vault.to_account_info(),
+                        authority: ctx.accounts.insurance_fund.to_account_info(),
+                    },
+                    fund_signer,
+                ),
+                topup_from_insurance,
+            )?;
+            ctx.accounts.insurance_fund.total_paid_out = ctx
+                .accounts
+                .insurance_fund
+                .total_paid_out
+                .checked_add(topup_from_insurance)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+
+        // After top-up, margin_vault holds: margin + topup_from_insurance.
+        ctx.accounts.margin_vault.reload()?;
+        let vault_now = ctx.accounts.margin_vault.amount;
+
+        // Trader payout = vault_now + (pnl if negative, capped at vault_now).
+        // pnl > 0: full vault drains to trader (topup already incorporated).
+        // pnl ≤ 0: trader gets vault_now − |pnl| capped at 0; residual (the
+        // loss) is swept to insurance below.
+        let (trader_payout, insurance_sweep) = if pnl >= 0 {
+            (vault_now, 0u64)
+        } else {
+            let loss = (-pnl) as u64;
+            let payout = vault_now.saturating_sub(loss);
+            let sweep = vault_now - payout; // = min(loss, vault_now)
+            (payout, sweep)
+        };
+
+        if trader_payout > 0 {
             token::transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
@@ -1292,11 +1430,32 @@ pub mod perp_engine {
                         to: ctx.accounts.trader_usdc_account.to_account_info(),
                         authority: ctx.accounts.position.to_account_info(),
                     },
-                    signer_seeds,
+                    position_signer,
                 ),
-                payout,
+                trader_payout,
             )?;
         }
+        if insurance_sweep > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.margin_vault.to_account_info(),
+                        to: ctx.accounts.insurance_vault.to_account_info(),
+                        authority: ctx.accounts.position.to_account_info(),
+                    },
+                    position_signer,
+                ),
+                insurance_sweep,
+            )?;
+            ctx.accounts.insurance_fund.total_deposited = ctx
+                .accounts
+                .insurance_fund
+                .total_deposited
+                .checked_add(insurance_sweep)
+                .ok_or(PerpError::MathOverflow)?;
+        }
+
         token::close_account(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             token::CloseAccount {
@@ -1304,17 +1463,29 @@ pub mod perp_engine {
                 destination: ctx.accounts.trader.to_account_info(),
                 authority: ctx.accounts.position.to_account_info(),
             },
-            signer_seeds,
+            position_signer,
         ))?;
 
-        // OI update (position closed via close=trader constraint)
+        // OI + count update (position closed via `close = trader` constraint).
         let market = &mut ctx.accounts.market;
         let abs_size = position_size.unsigned_abs();
-        if position_size > 0 {
+        if candidate_is_long {
             market.long_oi = market.long_oi.saturating_sub(abs_size);
+            market.long_position_count = market.long_position_count.saturating_sub(1);
         } else {
             market.short_oi = market.short_oi.saturating_sub(abs_size);
+            market.short_position_count = market.short_position_count.saturating_sub(1);
         }
+
+        // `haircut_retained` is intentionally not transferred anywhere — it
+        // represents insurance funds that would have been paid out absent the
+        // haircut. Insurance keeps them by NOT topping up that amount, which
+        // is the recapitalization mechanism. Surfaced as an event field could
+        // be added if observability needs it; for now the value falls out of
+        // (pnl_after_haircut − topup) = 0 when fully topped up, and the
+        // insurance vault delta is the audit trail.
+        let _ = haircut_retained;
+
         Ok(())
     }
 
@@ -1379,6 +1550,9 @@ pub mod perp_engine {
 //   0 = close_position pnl > 0 top-up shortfall (closing trader haircutted)
 //   1 = liquidate funding-owed-to-trader shortfall (liquidatee haircutted)
 //   2 = liquidate margin-can't-cover-liquidator (insurance backstops liquidator)
+//   3 = auto_deleverage pnl_after_haircut > insurance balance (v0.7) — the ADL'd
+//       trader is haircut by the standard adl_haircut_bps PLUS the remaining
+//       shortfall here, since insurance literally has nothing left to pay
 #[event]
 pub struct InsuranceShortfall {
     pub trader: Pubkey,
@@ -1489,6 +1663,14 @@ pub struct InitializeMarketParams {
     pub liquidation_penalty_bps: u16,
     pub max_oi_per_side: u64,
     pub max_position_per_trader: u64,
+    /// Per-side open-position count cap (v0.7). Bounded by Solana transaction
+    /// packet size since `auto_deleverage` requires count−1 witnesses; ~25 is
+    /// the practical ceiling without ALTs. Phase 2+ can raise this.
+    pub max_positions_per_side: u32,
+    /// Bps of positive PnL retained by the insurance fund instead of being
+    /// paid out to a deleveraged trader (v0.7). Recapitalizes insurance.
+    /// 5000 = 50% retention; 0 reproduces legacy "pay full PnL" behavior.
+    pub adl_haircut_bps: u16,
 }
 
 // ---------- Accounts contexts (stubbed; expand when implementing) ----------
@@ -1968,8 +2150,19 @@ pub struct AutoDeleverage<'info> {
     #[account(mut, token::mint = usdc_mint, token::authority = trader)]
     pub trader_usdc_account: Box<Account<'info, TokenAccount>>,
 
-    #[account(seeds = [INSURANCE_FUND_SEED], bump = insurance_fund.bump)]
+    #[account(mut, seeds = [INSURANCE_FUND_SEED], bump = insurance_fund.bump)]
     pub insurance_fund: Box<Account<'info, InsuranceFund>>,
+
+    /// Insurance USDC vault — sources the ADL pnl top-up and receives the
+    /// post-haircut sweep (v0.7). Authority is the insurance_fund PDA.
+    #[account(
+        mut,
+        seeds = [INSURANCE_VAULT_SEED],
+        bump,
+        token::mint = usdc_mint,
+        token::authority = insurance_fund,
+    )]
+    pub insurance_vault: Box<Account<'info, TokenAccount>>,
 
     pub usdc_mint: Box<Account<'info, Mint>>,
 

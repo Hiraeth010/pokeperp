@@ -241,6 +241,9 @@ describe("perp-engine integration", () => {
             liquidationPenaltyBps: 150, // 1.50%
             maxOiPerSide: new anchor.BN(500_000_000_000), // 500k USDC
             maxPositionPerTrader: new anchor.BN(50_000_000_000), // 50k USDC
+            // v0.7 ADL governance.
+            maxPositionsPerSide: 25,
+            adlHaircutBps: 5000, // 50% PnL retention on ADL
           })
           .accounts({
             market: marketPda,
@@ -954,21 +957,9 @@ describe("perp-engine integration", () => {
     });
   });
 
-  describe("insurance shortfall fallback (v0.6)", () => {
-    // The full shortfall trigger — actually firing InsuranceShortfall — requires
-    // a winning close where pnl > insurance_vault.amount. That's hard to engineer
-    // deterministically in this harness because:
-    //   (a) the insurance vault has accumulated funds from every prior test in
-    //       this suite, and there's no admin "drain" ix to zero it out
-    //   (b) producing a $X profit on a long requires a second long to push mark
-    //       up by exactly the right amount, against the EMA-dampened mark TWAP
-    //       and the post-close imbalance calculation — sensitive to test order
-    // The Rust code path is straightforward (cap top-up at vault.amount + emit
-    // event when shortfall > 0). For now we verify the event surfaces correctly
-    // in the IDL; full integration trigger is a v0.6 follow-up that may need
-    // either a test-only admin drain ix or a refactor of the close math into
-    // a pure helper for unit testing.
-
+  describe("insurance shortfall fallback (v0.6) + auto_deleverage (v0.7)", () => {
+    // IDL coverage from v0.6 — the event must remain registered so off-chain
+    // cranks can subscribe.
     it("registers InsuranceShortfall event in the program IDL", () => {
       const events = ((perp.idl as any).events ?? []) as Array<{ name: string }>;
       const shortfall = events.find(
@@ -977,6 +968,357 @@ describe("perp-engine integration", () => {
       expect(shortfall, "InsuranceShortfall event missing from IDL").to.not.equal(
         undefined
       );
+    });
+
+    // ----- v0.7 end-to-end ADL test -----
+    //
+    // Setup: spawn two fresh shorts (bob, charlie) and one long (alice). With
+    // long_oi = 25k, short_oi = 100k, total_oi = 125k > oi_floor 100k, the
+    // post-trade imbalance is (25 − 100)/125 = −60%. Mark = index × (1 −
+    // 0.06) = 0.94×index. Alice's entry_mark therefore sits 6% BELOW the
+    // current index price, so her PnL at index ≈ 25k × 6% / 0.94 ≈ 1596 USDC.
+    //
+    // After 50% haircut, the "owed" topup is ~798 USDC. By the time this
+    // describe runs, the insurance vault has accumulated taker fees + the
+    // liquidation suite's penalty share (~500–600 USDC). When the topup
+    // exceeds the vault, the shortfall path fires and alice is haircut by
+    // the deficit on top of the configured 50%.
+    //
+    // The test reads on-chain state to compute expected payouts dynamically,
+    // so it remains correct regardless of which specific insurance balance
+    // accumulated earlier in the suite.
+
+    /** Spawn a fresh trader, fund with SOL + 100k USDC ATA. */
+    async function spawn(): Promise<{ kp: Keypair; ata: PublicKey }> {
+      const kp = Keypair.generate();
+      const tx = new anchor.web3.Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: provider.wallet.publicKey,
+          toPubkey: kp.publicKey,
+          lamports: 5 * LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(tx, []);
+      const ata = await createAssociatedTokenAccount(
+        provider.connection,
+        payer,
+        usdcMint,
+        kp.publicKey
+      );
+      await mintTo(
+        provider.connection,
+        payer,
+        usdcMint,
+        ata,
+        usdcMintAuthority ?? payer,
+        100_000_000_000n
+      );
+      return { kp, ata };
+    }
+
+    let alice: Keypair, bob: Keypair, charlie: Keypair;
+    let aliceAta: PublicKey, bobAta: PublicKey, charlieAta: PublicKey;
+    let alicePos: PublicKey, bobPos: PublicKey, charliePos: PublicKey;
+    let aliceVault: PublicKey, bobVault: PublicKey, charlieVault: PublicKey;
+
+    function pdaPair(t: Keypair): { pos: PublicKey; vault: PublicKey } {
+      const [pos] = PublicKey.findProgramAddressSync(
+        [Buffer.from("position"), t.publicKey.toBuffer(), marketPda.toBuffer()],
+        perp.programId
+      );
+      const [vault] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("margin_vault"),
+          t.publicKey.toBuffer(),
+          marketPda.toBuffer(),
+        ],
+        perp.programId
+      );
+      return { pos, vault };
+    }
+
+    before(async () => {
+      const a = await spawn();
+      alice = a.kp;
+      aliceAta = a.ata;
+      ({ pos: alicePos, vault: aliceVault } = pdaPair(alice));
+      const b = await spawn();
+      bob = b.kp;
+      bobAta = b.ata;
+      ({ pos: bobPos, vault: bobVault } = pdaPair(bob));
+      const c = await spawn();
+      charlie = c.kp;
+      charlieAta = c.ata;
+      ({ pos: charliePos, vault: charlieVault } = pdaPair(charlie));
+    });
+
+    // Close bob/charlie shorts for cleanup. Alice's position is consumed by
+    // the ADL ix so no close needed.
+    after(async () => {
+      for (const t of [
+        { kp: bob, ata: bobAta, pos: bobPos, vault: bobVault },
+        { kp: charlie, ata: charlieAta, pos: charliePos, vault: charlieVault },
+      ]) {
+        try {
+          await perp.methods
+            .closePosition()
+            .accounts({
+              market: marketPda,
+              trader: t.kp.publicKey,
+              position: t.pos,
+              marginVault: t.vault,
+              traderUsdcAccount: t.ata,
+              usdcMint,
+              insuranceFund: insuranceFundPda,
+              insuranceVault: insuranceVaultPda,
+              treasuryVault: treasuryVaultPda,
+              treasury: treasuryPda,
+              indexState: indexStatePda,
+              tokenProgram: TOKEN_PROGRAM_ID,
+            })
+            .signers([t.kp])
+            .rpc();
+        } catch (_e) {
+          // Position may not exist — fine.
+        }
+      }
+    });
+
+    // Track pre-test counts — the liquidation suite's underwater-short test
+    // skips itself if the EMA hasn't converged enough, leaving an extra short
+    // open. Asserting deltas instead of absolutes keeps this block robust.
+    let shortCountBefore = 0;
+    let longCountBefore = 0;
+
+    it("opens bob short 50k (drives mark below index)", async () => {
+      const marketPre = await perp.account.market.fetch(marketPda);
+      shortCountBefore = marketPre.shortPositionCount;
+      longCountBefore = marketPre.longPositionCount;
+      await perp.methods
+        .openPosition(new anchor.BN(-50_000_000_000), new anchor.BN(16_500_000_000))
+        .accounts({
+          market: marketPda,
+          trader: bob.publicKey,
+          position: bobPos,
+          marginVault: bobVault,
+          traderUsdcAccount: bobAta,
+          insuranceVault: insuranceVaultPda,
+          insuranceFund: insuranceFundPda,
+          treasuryVault: treasuryVaultPda,
+          treasury: treasuryPda,
+          usdcMint,
+          indexState: indexStatePda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([bob])
+        .rpc();
+      const market = await perp.account.market.fetch(marketPda);
+      expect(market.shortPositionCount).to.equal(shortCountBefore + 1);
+    });
+
+    it("opens charlie short 50k (push imbalance to −60%)", async () => {
+      await perp.methods
+        .openPosition(new anchor.BN(-50_000_000_000), new anchor.BN(16_500_000_000))
+        .accounts({
+          market: marketPda,
+          trader: charlie.publicKey,
+          position: charliePos,
+          marginVault: charlieVault,
+          traderUsdcAccount: charlieAta,
+          insuranceVault: insuranceVaultPda,
+          insuranceFund: insuranceFundPda,
+          treasuryVault: treasuryVaultPda,
+          treasury: treasuryPda,
+          usdcMint,
+          indexState: indexStatePda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([charlie])
+        .rpc();
+      const market = await perp.account.market.fetch(marketPda);
+      expect(market.shortPositionCount).to.equal(shortCountBefore + 2);
+    });
+
+    it("opens alice long 25k at depressed mark (entry_mark < index)", async () => {
+      await perp.methods
+        .openPosition(new anchor.BN(25_000_000_000), new anchor.BN(8_250_000_000))
+        .accounts({
+          market: marketPda,
+          trader: alice.publicKey,
+          position: alicePos,
+          marginVault: aliceVault,
+          traderUsdcAccount: aliceAta,
+          insuranceVault: insuranceVaultPda,
+          insuranceFund: insuranceFundPda,
+          treasuryVault: treasuryVaultPda,
+          treasury: treasuryPda,
+          usdcMint,
+          indexState: indexStatePda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([alice])
+        .rpc();
+
+      const market = await perp.account.market.fetch(marketPda);
+      expect(market.longPositionCount).to.equal(longCountBefore + 1);
+      // Alice's entry_mark must be strictly below the current index price for
+      // her position to have positive PnL at index — that's the precondition
+      // for the ADL haircut path.
+      const position = await perp.account.position.fetch(alicePos);
+      const indexState = await oracle.account.indexState.fetch(indexStatePda);
+      expect(
+        BigInt(position.entryMarkPrice.toString()) <
+          BigInt(indexState.indexValue.toString()),
+        "alice.entry_mark must be < index_price"
+      ).to.equal(true);
+    });
+
+    it("rejects auto_deleverage with wrong witness count", async () => {
+      // long_count = 1 → required witnesses = 0. Passing a (matching-side)
+      // witness must revert with ADLWitnessCountMismatch. We use bob's
+      // position as a same-program-owned remaining account to make sure the
+      // count check fires before the side check.
+      let threw = false;
+      try {
+        await perp.methods
+          .autoDeleverage()
+          .accounts({
+            market: marketPda,
+            caller: provider.wallet.publicKey,
+            trader: alice.publicKey,
+            position: alicePos,
+            marginVault: aliceVault,
+            traderUsdcAccount: aliceAta,
+            insuranceFund: insuranceFundPda,
+            insuranceVault: insuranceVaultPda,
+            usdcMint,
+            indexState: indexStatePda,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: bobPos, isSigner: false, isWritable: false },
+          ])
+          .rpc();
+      } catch (e: any) {
+        threw = true;
+        const msg = (e?.error?.errorMessage ?? e?.message ?? "") as string;
+        expect(msg).to.match(/ADLWitnessCountMismatch|witness set size/i);
+      }
+      expect(threw, "ADL with extra witnesses must revert").to.equal(true);
+    });
+
+    it("auto_deleverage tops up via insurance + haircuts alice's PnL", async () => {
+      // Snapshot pre-state needed to derive expected payouts deterministically.
+      const aliceAtaBefore = BigInt(
+        (await getAccount(provider.connection, aliceAta)).amount
+      );
+      const aliceMarginBefore = BigInt(
+        (await getAccount(provider.connection, aliceVault)).amount
+      );
+      const insVaultBefore = BigInt(
+        (await getAccount(provider.connection, insuranceVaultPda)).amount
+      );
+      const fundBefore = await perp.account.insuranceFund.fetch(insuranceFundPda);
+      const marketBefore = await perp.account.market.fetch(marketPda);
+      const position = await perp.account.position.fetch(alicePos);
+      const indexState = await oracle.account.indexState.fetch(indexStatePda);
+
+      const entryMark = BigInt(position.entryMarkPrice.toString());
+      const indexPrice = BigInt(indexState.indexValue.toString());
+      const size = BigInt(position.size.toString()); // signed; positive long
+      const priceDelta = indexPrice - entryMark;
+      const pnl = (size * priceDelta) / entryMark; // mirrors on-chain math
+      expect(pnl > 0n, "alice's pnl must be positive").to.equal(true);
+
+      const haircutBps = BigInt(marketBefore.adlHaircutBps);
+      const haircut = (pnl * haircutBps) / 10_000n;
+      const pnlAfterHaircut = pnl - haircut;
+      const topup =
+        pnlAfterHaircut < insVaultBefore ? pnlAfterHaircut : insVaultBefore;
+      const shortfall = pnlAfterHaircut - topup;
+      console.log(
+        `    ADL math: pnl=$${(Number(pnl) / 1e6).toFixed(2)}` +
+          `, haircut=$${(Number(haircut) / 1e6).toFixed(2)}` +
+          `, topup=$${(Number(topup) / 1e6).toFixed(2)}` +
+          `, shortfall=$${(Number(shortfall) / 1e6).toFixed(2)}` +
+          `, insurance_before=$${(Number(insVaultBefore) / 1e6).toFixed(2)}`
+      );
+
+      await perp.methods
+        .autoDeleverage()
+        .accounts({
+          market: marketPda,
+          caller: provider.wallet.publicKey,
+          trader: alice.publicKey,
+          position: alicePos,
+          marginVault: aliceVault,
+          traderUsdcAccount: aliceAta,
+          insuranceFund: insuranceFundPda,
+          insuranceVault: insuranceVaultPda,
+          usdcMint,
+          indexState: indexStatePda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([]) // long_count − 1 = 0
+        .rpc();
+
+      // Alice received margin + topup (and ONLY topup, not pnl_after_haircut
+      // when shortfall > 0 — that's the haircut-by-shortfall behavior).
+      const aliceAtaAfter = BigInt(
+        (await getAccount(provider.connection, aliceAta)).amount
+      );
+      expect(aliceAtaAfter - aliceAtaBefore).to.equal(
+        aliceMarginBefore + topup
+      );
+
+      // Insurance: total_paid_out advanced by topup, vault drained by topup.
+      const fundAfter = await perp.account.insuranceFund.fetch(insuranceFundPda);
+      expect(
+        BigInt(fundAfter.totalPaidOut.toString()) -
+          BigInt(fundBefore.totalPaidOut.toString())
+      ).to.equal(topup);
+      const insVaultAfter = BigInt(
+        (await getAccount(provider.connection, insuranceVaultPda)).amount
+      );
+      expect(insVaultBefore - insVaultAfter).to.equal(topup);
+
+      // Position closed; long_position_count decremented.
+      let stillExists = true;
+      try {
+        await perp.account.position.fetch(alicePos);
+      } catch {
+        stillExists = false;
+      }
+      expect(stillExists).to.equal(false);
+      const marketAfter = await perp.account.market.fetch(marketPda);
+      expect(marketAfter.longPositionCount).to.equal(longCountBefore);
+
+      // Insurance accounting invariant must still hold.
+      await assertInsuranceConsistent("after auto_deleverage");
+
+      // If we actually hit the shortfall path (insurance couldn't fully cover
+      // the post-haircut topup), alice's payout strictly less than her
+      // theoretical "margin + pnl_after_haircut". That confirms the kind=3
+      // self-ADL path executed.
+      if (shortfall > 0n) {
+        expect(
+          aliceAtaAfter - aliceAtaBefore < aliceMarginBefore + pnlAfterHaircut,
+          "shortfall path implies alice receives less than margin + pnl_after_haircut"
+        ).to.equal(true);
+      }
+
+      // Crucially, the haircut amount NEVER leaves insurance — it's retained
+      // because we only top up `pnl_after_haircut`, not full pnl. That's the
+      // v0.7 recapitalization mechanism. Verify by computing the net
+      // insurance delta: it should equal (− topup), with the full `haircut`
+      // amount remaining in the fund relative to a no-haircut counterfactual.
+      // (We can't observe the counterfactual directly, but topup < pnl proves
+      // recapitalization vs. "pay full pnl".)
+      expect(topup < pnl, "topup must be strictly < gross pnl (haircut applied)")
+        .to.equal(true);
     });
   });
 

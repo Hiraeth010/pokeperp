@@ -133,22 +133,36 @@ export type PerpEngine = {
     {
       "name": "autoDeleverage",
       "docs": [
-        "Force-close a profitable position when the insurance fund is below floor.",
+        "Force-close a high-PnL position when the insurance fund is below floor.",
         "Spec: docs/perp-engine.md §8.",
         "",
-        "Ranking is enforced via witness positions passed in `remaining_accounts`:",
-        "every witness must be on the SAME side as the candidate, belong to this",
-        "market, and have a strictly lower current PnL (computed at the same",
-        "index_price snapshot). v0.4 requires ≥ 1 witness — this gives a",
-        "probabilistic \"candidate is high-ranked\" guarantee, not \"globally",
-        "highest\". The off-chain crank picks N witnesses to make the proof",
-        "statistically convincing; v0.5 could require N ≥ K with K tied to the",
-        "total open-position count.",
+        "v0.7 changes (replaces v0.4-v0.6 probabilistic ADL):",
         "",
-        "v0.4 simplifications carried over from v0.1:",
-        "- Closes at current index price (no mark slippage), no penalty.",
-        "- Pays out margin + pnl to the ADL'd trader (no haircut — a v0.5",
-        "improvement is to haircut the payout to actually restore insurance)."
+        "1. **Deterministic N-witness ranking.** The caller MUST pass exactly",
+        "`same_side_count − 1` witness positions in `remaining_accounts`,",
+        "where `same_side_count` is `market.long_position_count` (long",
+        "candidate) or `short_position_count` (short candidate). Each witness",
+        "must be (a) a Position owned by this program, (b) belong to this",
+        "market, (c) be on the candidate's side, (d) have current PnL ≤",
+        "candidate's PnL at the same index_price, and (e) belong to a",
+        "different trader than the candidate and every other witness.",
+        "This proves the candidate is the globally-highest-PnL open position",
+        "on its side — no off-chain trust required.",
+        "",
+        "2. **Insurance-mediated payout with haircut.** When `pnl > 0`, the",
+        "payout the trader would otherwise receive is haircut by",
+        "`market.adl_haircut_bps`. The remainder is topped up from the",
+        "insurance vault (capped at vault balance — shortfall emits",
+        "`InsuranceShortfall { kind: 3 }`). The haircut amount NEVER leaves",
+        "insurance, so the fund is recapitalized by exactly that amount per",
+        "ADL call. When `pnl ≤ 0`, no haircut; residual margin loss is swept",
+        "to insurance (additional recap).",
+        "",
+        "3. **Fixed margin vault accounting.** Pre-v0.7 the code attempted to",
+        "pay `margin + pnl` from `margin_vault` which only holds `margin` —",
+        "the transfer would fail for any winning candidate. v0.7 routes the",
+        "pnl top-up through insurance → margin_vault BEFORE the trader",
+        "payout so all transfers respect actual balances."
       ],
       "discriminator": [
         210,
@@ -262,6 +276,7 @@ export type PerpEngine = {
         },
         {
           "name": "insuranceFund",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -281,6 +296,38 @@ export type PerpEngine = {
                   117,
                   110,
                   100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "insuranceVault",
+          "docs": [
+            "Insurance USDC vault — sources the ADL pnl top-up and receives the",
+            "post-haircut sweep (v0.7). Authority is the insurance_fund PDA."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
                 ]
               }
             ]
@@ -2007,6 +2054,21 @@ export type PerpEngine = {
       "code": 6015,
       "name": "adlRankingFailed",
       "msg": "ADL ranking proof failed: witness position has higher PnL than candidate, or no witnesses provided"
+    },
+    {
+      "code": 6016,
+      "name": "adlWitnessCountMismatch",
+      "msg": "ADL witness set size mismatch — must equal same-side open-position count minus 1"
+    },
+    {
+      "code": 6017,
+      "name": "adlDuplicateWitness",
+      "msg": "ADL witness list contains duplicate or candidate's own position"
+    },
+    {
+      "code": 6018,
+      "name": "positionLimitExceeded",
+      "msg": "Per-side position count cap exceeded"
     }
   ],
   "types": [
@@ -2136,6 +2198,24 @@ export type PerpEngine = {
           {
             "name": "maxPositionPerTrader",
             "type": "u64"
+          },
+          {
+            "name": "maxPositionsPerSide",
+            "docs": [
+              "Per-side open-position count cap (v0.7). Bounded by Solana transaction",
+              "packet size since `auto_deleverage` requires count−1 witnesses; ~25 is",
+              "the practical ceiling without ALTs. Phase 2+ can raise this."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "adlHaircutBps",
+            "docs": [
+              "Bps of positive PnL retained by the insurance fund instead of being",
+              "paid out to a deleveraged trader (v0.7). Recapitalizes insurance.",
+              "5000 = 50% retention; 0 reproduces legacy \"pay full PnL\" behavior."
+            ],
+            "type": "u16"
           }
         ]
       }
@@ -2312,6 +2392,22 @@ export type PerpEngine = {
           {
             "name": "markDeviationExceededSince",
             "type": "i64"
+          },
+          {
+            "name": "longPositionCount",
+            "type": "u32"
+          },
+          {
+            "name": "shortPositionCount",
+            "type": "u32"
+          },
+          {
+            "name": "maxPositionsPerSide",
+            "type": "u32"
+          },
+          {
+            "name": "adlHaircutBps",
+            "type": "u16"
           },
           {
             "name": "bump",

@@ -34,4 +34,10 @@ pub enum PerpError {
     ZeroSize,
     #[msg("ADL ranking proof failed: witness position has higher PnL than candidate, or no witnesses provided")]
     ADLRankingFailed,
+    #[msg("ADL witness set size mismatch — must equal same-side open-position count minus 1")]
+    ADLWitnessCountMismatch,
+    #[msg("ADL witness list contains duplicate or candidate's own position")]
+    ADLDuplicateWitness,
+    #[msg("Per-side position count cap exceeded")]
+    PositionLimitExceeded,
 }
