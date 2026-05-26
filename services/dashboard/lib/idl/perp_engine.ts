@@ -14,6 +14,50 @@ export type PerpEngine = {
   },
   "instructions": [
     {
+      "name": "acceptAdminTransfer",
+      "docs": [
+        "Step 2 of admin transfer: the proposed admin signs to accept authority.",
+        "The signer constraint (matches `market.pending_admin`) lives on the",
+        "accounts context.  After commit, the pending slot is cleared."
+      ],
+      "discriminator": [
+        89,
+        211,
+        96,
+        212,
+        233,
+        0,
+        251,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "newAdmin",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "addMargin",
       "docs": [
         "Add margin to an open position. No checks beyond non-zero — only ever helps the position.",
@@ -591,6 +635,112 @@ export type PerpEngine = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "depositInsurance",
+      "docs": [
+        "Deposit USDC into the insurance vault (v0.8). Anyone can call — donating",
+        "to insurance is unambiguously good for the protocol (winning traders are",
+        "paid out of this fund; cf. close_position / liquidate / auto_deleverage).",
+        "No griefing vector exists because you can't *withdraw* from insurance",
+        "outside the per-trade settlement paths; deposits only ever increase the",
+        "protocol's solvency margin.",
+        "",
+        "Required at mainnet launch to seed the fund (~25k–100k USDC for Phase 1,",
+        "250k+ for Phase 2 per docs/perp-engine.md §10).  Sponsors / the treasury",
+        "can top up at any time; the off-chain crank can also use this if it has",
+        "a balancing source.",
+        "",
+        "Spec: docs/perp-engine.md §7, §10."
+      ],
+      "discriminator": [
+        34,
+        221,
+        238,
+        103,
+        190,
+        136,
+        23,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "insuranceFund",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "insuranceVault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "usdcMint"
+        },
+        {
+          "name": "depositor",
+          "signer": true
+        },
+        {
+          "name": "depositorUsdcAccount",
+          "writable": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "initializeInsuranceFund",
@@ -1496,6 +1646,54 @@ export type PerpEngine = {
       ]
     },
     {
+      "name": "proposeAdminTransfer",
+      "docs": [
+        "Step 1 of admin transfer: current admin nominates a new admin.",
+        "Overwrites any prior pending proposal."
+      ],
+      "discriminator": [
+        218,
+        178,
+        115,
+        190,
+        80,
+        107,
+        95,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "newAdmin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "setPause",
       "docs": [
         "Admin emergency pause / unpause for trading and funding.",
@@ -2295,6 +2493,18 @@ export type PerpEngine = {
         "fields": [
           {
             "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pendingAdmin",
+            "docs": [
+              "v0.8 two-step admin transfer.  `propose_admin_transfer` sets this to the",
+              "target pubkey; `accept_admin_transfer` (signed by that pubkey) commits",
+              "the transfer and clears this back to `Pubkey::default()` (sentinel for",
+              "\"no transfer in flight\").  Two-step protects against typos and lets you",
+              "verify the new admin (e.g. a Squads multisig vault PDA) can actually",
+              "sign before authority is committed."
+            ],
             "type": "pubkey"
           },
           {

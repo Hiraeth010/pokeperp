@@ -6,6 +6,12 @@ use anchor_lang::prelude::*;
 #[derive(InitSpace)]
 pub struct Config {
     pub admin: Pubkey,
+    /// v0.8 two-step admin transfer.  Same semantics as Market.pending_admin
+    /// in perp-engine: propose_admin_transfer writes here, accept_admin_transfer
+    /// (signed by the proposed admin) commits.  Sentinel for "no transfer in
+    /// flight" is Pubkey::default().  Two-step protects against typos when
+    /// handing authority to a Squads multisig vault.
+    pub pending_admin: Pubkey,
     pub publisher_count: u8,
     pub publisher_bond: u64,
     pub challenge_bond: u64,

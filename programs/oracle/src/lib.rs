@@ -34,6 +34,7 @@ pub mod oracle {
 
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
+        config.pending_admin = Pubkey::default(); // v0.8: no transfer in flight
         config.publisher_count = 0;
         config.publisher_bond = params.publisher_bond;
         config.challenge_bond = params.challenge_bond;
@@ -702,6 +703,34 @@ pub mod oracle {
         config.pause_reason = 0;
         Ok(())
     }
+
+    // ============================================================
+    // Two-step admin transfer (v0.8) — mirrors perp-engine's pattern.
+    // See programs/perp-engine/src/lib.rs for full design notes.  Both programs
+    // need this so the same Squads multisig can be wired in across the whole
+    // protocol via two on-chain calls (one per program).
+    // ============================================================
+
+    /// Current admin nominates a new admin. Overwrites any prior proposal.
+    pub fn propose_admin_transfer(
+        ctx: Context<ProposeAdminTransfer>,
+        new_admin: Pubkey,
+    ) -> Result<()> {
+        ctx.accounts.config.pending_admin = new_admin;
+        Ok(())
+    }
+
+    /// Proposed admin signs to accept authority; commit + clear pending slot.
+    pub fn accept_admin_transfer(ctx: Context<AcceptAdminTransfer>) -> Result<()> {
+        require!(
+            ctx.accounts.config.pending_admin != Pubkey::default(),
+            OracleError::Unauthorized
+        );
+        let config = &mut ctx.accounts.config;
+        config.admin = config.pending_admin;
+        config.pending_admin = Pubkey::default();
+        Ok(())
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -1096,4 +1125,32 @@ pub struct EmergencyPause<'info> {
     pub config: Box<Account<'info, Config>>,
 
     pub admin: Signer<'info>,
+}
+
+/// Step 1 of admin transfer (v0.8): only the current admin can propose.
+#[derive(Accounts)]
+pub struct ProposeAdminTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ OracleError::Unauthorized,
+    )]
+    pub config: Box<Account<'info, Config>>,
+
+    pub admin: Signer<'info>,
+}
+
+/// Step 2 of admin transfer (v0.8): only the proposed new admin can accept.
+#[derive(Accounts)]
+pub struct AcceptAdminTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.pending_admin == new_admin.key() @ OracleError::Unauthorized,
+    )]
+    pub config: Box<Account<'info, Config>>,
+
+    pub new_admin: Signer<'info>,
 }

@@ -926,4 +926,71 @@ describe("oracle", () => {
     expect(cfg.paused).to.equal(false);
     expect(cfg.pauseReason).to.equal(0);
   });
+
+  it("performs a two-step admin transfer on Config (v0.8)", async () => {
+    // Same pattern as perp-engine's Market admin transfer.  Propose → accept
+    // → transfer back so subsequent tests / re-runs keep the provider wallet
+    // as admin.
+    const newAdmin = anchor.web3.Keypair.generate();
+    await provider.sendAndConfirm(
+      new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: provider.wallet.publicKey,
+          toPubkey: newAdmin.publicKey,
+          lamports: anchor.web3.LAMPORTS_PER_SOL,
+        })
+      ),
+      []
+    );
+
+    // 1. Propose.
+    await program.methods
+      .proposeAdminTransfer(newAdmin.publicKey)
+      .accounts({ config: configPda, admin: provider.wallet.publicKey })
+      .rpc();
+    let cfg = await program.account.config.fetch(configPda);
+    expect(cfg.pendingAdmin.toBase58()).to.equal(newAdmin.publicKey.toBase58());
+    expect(cfg.admin.toBase58()).to.equal(
+      provider.wallet.publicKey.toBase58()
+    );
+
+    // 2. Accept (signed by the proposed key).
+    await program.methods
+      .acceptAdminTransfer()
+      .accounts({ config: configPda, newAdmin: newAdmin.publicKey })
+      .signers([newAdmin])
+      .rpc();
+    cfg = await program.account.config.fetch(configPda);
+    expect(cfg.admin.toBase58()).to.equal(newAdmin.publicKey.toBase58());
+    expect(cfg.pendingAdmin.toBase58()).to.equal(
+      anchor.web3.PublicKey.default.toBase58()
+    );
+
+    // 3. Old admin (provider wallet) should no longer be able to administer.
+    let oldAdminThrew = false;
+    try {
+      await program.methods
+        .proposeAdminTransfer(newAdmin.publicKey)
+        .accounts({ config: configPda, admin: provider.wallet.publicKey })
+        .rpc();
+    } catch (_e) {
+      oldAdminThrew = true;
+    }
+    expect(oldAdminThrew, "old admin must lose authority").to.equal(true);
+
+    // 4. Restore — newAdmin transfers back to the provider wallet.
+    await program.methods
+      .proposeAdminTransfer(provider.wallet.publicKey)
+      .accounts({ config: configPda, admin: newAdmin.publicKey })
+      .signers([newAdmin])
+      .rpc();
+    await program.methods
+      .acceptAdminTransfer()
+      .accounts({ config: configPda, newAdmin: provider.wallet.publicKey })
+      .rpc();
+    cfg = await program.account.config.fetch(configPda);
+    expect(cfg.admin.toBase58()).to.equal(
+      provider.wallet.publicKey.toBase58()
+    );
+  });
 });

@@ -1322,6 +1322,230 @@ describe("perp-engine integration", () => {
     });
   });
 
+  describe("deposit_insurance + admin transfer (v0.8)", () => {
+    it("anyone can deposit USDC into the insurance vault", async () => {
+      // Use the admin's USDC ATA — the test's trader keypair has already
+      // funded their position so isn't useful here.  We mint fresh USDC into
+      // the admin's ATA and deposit it.
+      const adminAta = await anchor.utils.token.associatedAddress({
+        mint: usdcMint,
+        owner: provider.wallet.publicKey,
+      });
+      // Ensure the admin has a USDC ATA + balance.  Idempotent create.
+      try {
+        await createAssociatedTokenAccount(
+          provider.connection,
+          payer,
+          usdcMint,
+          provider.wallet.publicKey
+        );
+      } catch (_e) {
+        // Already exists — fine.
+      }
+      await mintTo(
+        provider.connection,
+        payer,
+        usdcMint,
+        adminAta,
+        usdcMintAuthority ?? payer,
+        50_000_000_000n // 50k USDC seed
+      );
+
+      const adminBalBefore = BigInt(
+        (await getAccount(provider.connection, adminAta)).amount
+      );
+      const vaultBefore = await vaultBalance();
+      const fundBefore = await perp.account.insuranceFund.fetch(insuranceFundPda);
+
+      const depositAmount = new anchor.BN(10_000_000_000); // 10k USDC
+
+      await perp.methods
+        .depositInsurance(depositAmount)
+        .accounts({
+          insuranceFund: insuranceFundPda,
+          insuranceVault: insuranceVaultPda,
+          usdcMint,
+          depositor: provider.wallet.publicKey,
+          depositorUsdcAccount: adminAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      // Vault grew by exactly the deposit, depositor's ATA shrank by the same.
+      const adminBalAfter = BigInt(
+        (await getAccount(provider.connection, adminAta)).amount
+      );
+      const vaultAfter = await vaultBalance();
+      const fundAfter = await perp.account.insuranceFund.fetch(insuranceFundPda);
+
+      expect(adminBalBefore - adminBalAfter).to.equal(
+        BigInt(depositAmount.toString())
+      );
+      expect(vaultAfter - vaultBefore).to.equal(BigInt(depositAmount.toString()));
+      expect(
+        BigInt(fundAfter.totalDeposited.toString()) -
+          BigInt(fundBefore.totalDeposited.toString())
+      ).to.equal(BigInt(depositAmount.toString()));
+
+      // Accounting invariant must still hold.
+      await assertInsuranceConsistent("after deposit_insurance");
+    });
+
+    it("rejects zero-amount deposit", async () => {
+      const adminAta = await anchor.utils.token.associatedAddress({
+        mint: usdcMint,
+        owner: provider.wallet.publicKey,
+      });
+      let threw = false;
+      try {
+        await perp.methods
+          .depositInsurance(new anchor.BN(0))
+          .accounts({
+            insuranceFund: insuranceFundPda,
+            insuranceVault: insuranceVaultPda,
+            usdcMint,
+            depositor: provider.wallet.publicKey,
+            depositorUsdcAccount: adminAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .rpc();
+      } catch (_e) {
+        threw = true;
+      }
+      expect(threw, "zero deposit should revert").to.equal(true);
+    });
+
+    it("performs a two-step admin transfer", async () => {
+      // 1. Propose: current admin nominates `newAdmin`.
+      // 2. Accept: newAdmin signs to commit.
+      // 3. Transfer back: newAdmin proposes original admin; original accepts.
+      //    Restoration is necessary so subsequent tests (and re-runs against
+      //    a dirty validator) keep working with the provider wallet as admin.
+      const newAdmin = Keypair.generate();
+      // Fund newAdmin with SOL so it can sign.
+      await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: provider.wallet.publicKey,
+            toPubkey: newAdmin.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        ),
+        []
+      );
+
+      // Step 1: propose.
+      await perp.methods
+        .proposeAdminTransfer(newAdmin.publicKey)
+        .accounts({
+          market: marketPda,
+          admin: provider.wallet.publicKey,
+        })
+        .rpc();
+      let market = await perp.account.market.fetch(marketPda);
+      expect(market.pendingAdmin.toBase58()).to.equal(
+        newAdmin.publicKey.toBase58()
+      );
+      expect(market.admin.toBase58()).to.equal(
+        provider.wallet.publicKey.toBase58()
+      ); // unchanged
+
+      // Step 2: a stranger (not newAdmin) tries to accept — must revert.
+      const stranger = Keypair.generate();
+      await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: provider.wallet.publicKey,
+            toPubkey: stranger.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        ),
+        []
+      );
+      let strangerThrew = false;
+      try {
+        await perp.methods
+          .acceptAdminTransfer()
+          .accounts({ market: marketPda, newAdmin: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+      } catch (_e) {
+        strangerThrew = true;
+      }
+      expect(strangerThrew, "non-pending signer must not be able to accept")
+        .to.equal(true);
+
+      // Step 3: newAdmin actually accepts.
+      await perp.methods
+        .acceptAdminTransfer()
+        .accounts({ market: marketPda, newAdmin: newAdmin.publicKey })
+        .signers([newAdmin])
+        .rpc();
+      market = await perp.account.market.fetch(marketPda);
+      expect(market.admin.toBase58()).to.equal(newAdmin.publicKey.toBase58());
+      expect(market.pendingAdmin.toBase58()).to.equal(
+        PublicKey.default.toBase58()
+      );
+
+      // Step 4: old admin tries to administer — must revert (lost authority).
+      let oldAdminThrew = false;
+      try {
+        await perp.methods
+          .proposeAdminTransfer(newAdmin.publicKey)
+          .accounts({ market: marketPda, admin: provider.wallet.publicKey })
+          .rpc();
+      } catch (_e) {
+        oldAdminThrew = true;
+      }
+      expect(oldAdminThrew, "old admin must lose authority after transfer")
+        .to.equal(true);
+
+      // Step 5: hand authority BACK to provider.wallet so the rest of the suite
+      // and future re-runs work.
+      await perp.methods
+        .proposeAdminTransfer(provider.wallet.publicKey)
+        .accounts({ market: marketPda, admin: newAdmin.publicKey })
+        .signers([newAdmin])
+        .rpc();
+      await perp.methods
+        .acceptAdminTransfer()
+        .accounts({ market: marketPda, newAdmin: provider.wallet.publicKey })
+        .rpc();
+      market = await perp.account.market.fetch(marketPda);
+      expect(market.admin.toBase58()).to.equal(
+        provider.wallet.publicKey.toBase58()
+      );
+      expect(market.pendingAdmin.toBase58()).to.equal(
+        PublicKey.default.toBase58()
+      );
+    });
+
+    it("non-admin cannot propose a transfer", async () => {
+      const stranger = Keypair.generate();
+      await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: provider.wallet.publicKey,
+            toPubkey: stranger.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        ),
+        []
+      );
+      let threw = false;
+      try {
+        await perp.methods
+          .proposeAdminTransfer(stranger.publicKey)
+          .accounts({ market: marketPda, admin: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+      } catch (_e) {
+        threw = true;
+      }
+      expect(threw, "non-admin proposal should revert").to.equal(true);
+    });
+  });
+
   describe("invariants", () => {
     it("insurance vault matches total_deposited − total_paid_out", async () => {
       await assertInsuranceConsistent("end-of-suite");

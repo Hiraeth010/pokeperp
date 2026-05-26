@@ -14,6 +14,48 @@ export type Oracle = {
   },
   "instructions": [
     {
+      "name": "acceptAdminTransfer",
+      "docs": [
+        "Proposed admin signs to accept authority; commit + clear pending slot."
+      ],
+      "discriminator": [
+        89,
+        211,
+        96,
+        212,
+        233,
+        0,
+        251,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "newAdmin",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "activatePublisher",
       "docs": [
         "Promote publisher from shadow to active after 30-day shadow period.",
@@ -647,6 +689,53 @@ export type Oracle = {
         {
           "name": "evidenceUri",
           "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "proposeAdminTransfer",
+      "docs": [
+        "Current admin nominates a new admin. Overwrites any prior proposal."
+      ],
+      "discriminator": [
+        218,
+        178,
+        115,
+        190,
+        80,
+        107,
+        95,
+        158
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "newAdmin",
+          "type": "pubkey"
         }
       ]
     },
@@ -1512,6 +1601,17 @@ export type Oracle = {
         "fields": [
           {
             "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pendingAdmin",
+            "docs": [
+              "v0.8 two-step admin transfer.  Same semantics as Market.pending_admin",
+              "in perp-engine: propose_admin_transfer writes here, accept_admin_transfer",
+              "(signed by the proposed admin) commits.  Sentinel for \"no transfer in",
+              "flight\" is Pubkey::default().  Two-step protects against typos when",
+              "handing authority to a Squads multisig vault."
+            ],
             "type": "pubkey"
           },
           {

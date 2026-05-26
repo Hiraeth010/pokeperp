@@ -6,6 +6,13 @@ use anchor_lang::prelude::*;
 #[derive(InitSpace)]
 pub struct Market {
     pub admin: Pubkey,
+    /// v0.8 two-step admin transfer.  `propose_admin_transfer` sets this to the
+    /// target pubkey; `accept_admin_transfer` (signed by that pubkey) commits
+    /// the transfer and clears this back to `Pubkey::default()` (sentinel for
+    /// "no transfer in flight").  Two-step protects against typos and lets you
+    /// verify the new admin (e.g. a Squads multisig vault PDA) can actually
+    /// sign before authority is committed.
+    pub pending_admin: Pubkey,
     pub oracle_index_state: Pubkey,
     pub usdc_mint: Pubkey,
     pub insurance_fund: Pubkey,

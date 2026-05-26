@@ -61,6 +61,7 @@ pub mod perp_engine {
 
         let market = &mut ctx.accounts.market;
         market.admin = ctx.accounts.admin.key();
+        market.pending_admin = Pubkey::default(); // v0.8: no transfer in flight
         market.oracle_index_state = params.oracle_index_state;
         market.usdc_mint = ctx.accounts.usdc_mint.key();
         market.insurance_fund = insurance_fund_pda;
@@ -114,6 +115,41 @@ pub mod perp_engine {
         fund.total_deposited = 0;
         fund.total_paid_out = 0;
         fund.bump = ctx.bumps.insurance_fund;
+        Ok(())
+    }
+
+    /// Deposit USDC into the insurance vault (v0.8). Anyone can call — donating
+    /// to insurance is unambiguously good for the protocol (winning traders are
+    /// paid out of this fund; cf. close_position / liquidate / auto_deleverage).
+    /// No griefing vector exists because you can't *withdraw* from insurance
+    /// outside the per-trade settlement paths; deposits only ever increase the
+    /// protocol's solvency margin.
+    ///
+    /// Required at mainnet launch to seed the fund (~25k–100k USDC for Phase 1,
+    /// 250k+ for Phase 2 per docs/perp-engine.md §10).  Sponsors / the treasury
+    /// can top up at any time; the off-chain crank can also use this if it has
+    /// a balancing source.
+    ///
+    /// Spec: docs/perp-engine.md §7, §10.
+    pub fn deposit_insurance(ctx: Context<DepositInsurance>, amount: u64) -> Result<()> {
+        require!(amount > 0, PerpError::InvalidConfig);
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.depositor_usdc_account.to_account_info(),
+                    to: ctx.accounts.insurance_vault.to_account_info(),
+                    authority: ctx.accounts.depositor.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+        ctx.accounts.insurance_fund.total_deposited = ctx
+            .accounts
+            .insurance_fund
+            .total_deposited
+            .checked_add(amount)
+            .ok_or(PerpError::MathOverflow)?;
         Ok(())
     }
 
@@ -1536,6 +1572,57 @@ pub mod perp_engine {
 
         Ok(())
     }
+
+    // ============================================================
+    // Two-step admin transfer (v0.8)
+    // ============================================================
+    //
+    // Used to hand admin authority over to a Squads multisig vault PDA before
+    // mainnet — see docs/mainnet-runbook.md for the operational steps.  Two-
+    // step is deliberate: a single-step transfer-to-a-typo would brick the
+    // protocol's admin functions forever.  Pattern:
+    //
+    //   1. Current admin calls `propose_admin_transfer(new_admin)`.  This
+    //      writes `market.pending_admin = new_admin` but doesn't change
+    //      `market.admin`.  The protocol is still administered by the old key.
+    //
+    //   2. The proposed new admin (a Squad vault PDA, in the multisig case)
+    //      calls `accept_admin_transfer`.  Because they had to sign, we know
+    //      the key actually controls funds and can act in the future.  This
+    //      step commits: `market.admin = pending_admin`, `pending_admin =
+    //      Pubkey::default()`.
+    //
+    //   3. The old admin can cancel an in-flight proposal by calling
+    //      `propose_admin_transfer(market.admin)` — proposing themselves,
+    //      then accepting, effectively no-ops the transfer.  No dedicated
+    //      cancel ix needed.
+
+    /// Step 1 of admin transfer: current admin nominates a new admin.
+    /// Overwrites any prior pending proposal.
+    pub fn propose_admin_transfer(
+        ctx: Context<ProposeAdminTransfer>,
+        new_admin: Pubkey,
+    ) -> Result<()> {
+        // Pubkey::default() is the "no pending transfer" sentinel; proposing
+        // it explicitly would clear a pending transfer, which is fine — that's
+        // how the current admin cancels their own in-flight proposal.
+        ctx.accounts.market.pending_admin = new_admin;
+        Ok(())
+    }
+
+    /// Step 2 of admin transfer: the proposed admin signs to accept authority.
+    /// The signer constraint (matches `market.pending_admin`) lives on the
+    /// accounts context.  After commit, the pending slot is cleared.
+    pub fn accept_admin_transfer(ctx: Context<AcceptAdminTransfer>) -> Result<()> {
+        require!(
+            ctx.accounts.market.pending_admin != Pubkey::default(),
+            PerpError::Unauthorized
+        );
+        let market = &mut ctx.accounts.market;
+        market.admin = market.pending_admin;
+        market.pending_admin = Pubkey::default();
+        Ok(())
+    }
 }
 
 // ---- Insurance shortfall event ----
@@ -1723,6 +1810,35 @@ pub struct InitializeInsuranceFund<'info> {
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+}
+
+/// Anyone can deposit USDC into the insurance vault (v0.8).  Vault authority is
+/// the insurance_fund PDA (unchanged from initialize_insurance_fund) so
+/// deposits flow IN via a normal SPL transfer signed by the depositor;
+/// withdrawals OUT are only possible through close_position / liquidate /
+/// auto_deleverage settlement paths, which the user can't trigger arbitrarily.
+#[derive(Accounts)]
+pub struct DepositInsurance<'info> {
+    #[account(mut, seeds = [INSURANCE_FUND_SEED], bump = insurance_fund.bump)]
+    pub insurance_fund: Box<Account<'info, InsuranceFund>>,
+
+    #[account(
+        mut,
+        seeds = [INSURANCE_VAULT_SEED],
+        bump,
+        token::mint = usdc_mint,
+        token::authority = insurance_fund,
+    )]
+    pub insurance_vault: Box<Account<'info, TokenAccount>>,
+
+    pub usdc_mint: Box<Account<'info, Mint>>,
+
+    pub depositor: Signer<'info>,
+
+    #[account(mut, token::mint = usdc_mint, token::authority = depositor)]
+    pub depositor_usdc_account: Box<Account<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -2198,6 +2314,37 @@ pub struct SetPhase<'info> {
     pub market: Box<Account<'info, Market>>,
 
     pub admin: Signer<'info>,
+}
+
+/// Step 1 of admin transfer (v0.8): only the current admin can propose.
+#[derive(Accounts)]
+pub struct ProposeAdminTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [MARKET_SEED],
+        bump = market.bump,
+        constraint = market.admin == admin.key() @ PerpError::Unauthorized,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    pub admin: Signer<'info>,
+}
+
+/// Step 2 of admin transfer (v0.8): only the proposed new admin can accept.
+/// The constraint `market.pending_admin == new_admin.key()` enforces that no
+/// random pubkey can self-promote to admin — only the one the current admin
+/// nominated via propose_admin_transfer.
+#[derive(Accounts)]
+pub struct AcceptAdminTransfer<'info> {
+    #[account(
+        mut,
+        seeds = [MARKET_SEED],
+        bump = market.bump,
+        constraint = market.pending_admin == new_admin.key() @ PerpError::Unauthorized,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    pub new_admin: Signer<'info>,
 }
 
 #[cfg(test)]
