@@ -39,7 +39,7 @@ export default function DevnetBanner() {
           </span>
           <span className="opacity-90">
             — programs + USDC are devnet test versions. Don&apos;t use real
-            funds. Mainnet launch is a separate event we&apos;ll announce on{" "}
+            funds. We&apos;ll announce Mainnet launch on{" "}
             <a
               href="https://x.com/PokePerp"
               target="_blank"
