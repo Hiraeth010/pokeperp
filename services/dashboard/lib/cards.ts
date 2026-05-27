@@ -90,8 +90,12 @@ const CARD_NAMES: Record<string, string> = {
   // Pokemon 151 (sv3pt5)
   "PMK-199-SIR": "Charizard ex (151)",
   "PMK-204-SIR": "Giovanni's Charisma",
-  // Astral Radiance (swsh10)
-  "AR-188-AA": "Hisuian Zoroark VSTAR",
+  // Crown Zenith Galarian Gallery (swsh12pt5gg) — canonical Hisuian Zoroark
+  // VSTAR alt-art lives here at GG56/GG70.  Inception-candidates.md v0.1
+  // mistakenly listed this as "AR-188-AA" (Astral Radiance #188) but pokemontcg
+  // #188 in that set is Roxanne SAR — the Hisuian Zoroark alt art doesn't
+  // exist in Astral Radiance at all.  Corrected v0.9.
+  "CZ-56-GG": "Hisuian Zoroark VSTAR",
   // Obsidian Flames (sv3)
   "OF-215-SIR": "Charizard ex (Obsidian Flames)",
   // Paldean Fates (sv4pt5)
@@ -122,6 +126,18 @@ export function cardImageUrl(
     if (!parent) return null;
     const padded = String(c.collectorNumber).padStart(2, "0");
     return `https://images.pokemontcg.io/${parent}tg/TG${padded}${suffix}`;
+  }
+
+  // Galarian Gallery (Crown Zenith): pokemontcg.io stores GG cards in the
+  // parent set with filenames `GG<NN>.png` (zero-padded to 2 digits). The
+  // SET_CODE_TO_API mapping for "CZ" already points directly at the GG subset
+  // (`swsh12pt5gg`), so no extra suffix on the path — just the GG-prefixed
+  // filename.  Empirically verified: swsh12pt5gg/GG56.png → 200, /56.png → 404.
+  if (variantUpper === "GG") {
+    const parent = SET_CODE_TO_API[c.setCode];
+    if (!parent) return null;
+    const padded = String(c.collectorNumber).padStart(2, "0");
+    return `https://images.pokemontcg.io/${parent}/GG${padded}${suffix}`;
   }
 
   // Shining Fates Shiny Vault: SV-prefixed numbering in the swsh45sv subset.

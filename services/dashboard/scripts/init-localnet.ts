@@ -194,8 +194,10 @@ async function main(): Promise<void> {
     // Pokemon 151 (sv3pt5)
     { name: "Charizard ex 151",      set: "PMK", num: 199, variant: "SIR", total: 165, price: 1781 },
     { name: "Giovanni's Charisma",   set: "PMK", num: 204, variant: "SIR", total: 165, price:  160 },
-    // Astral Radiance (swsh10)
-    { name: "Hisuian Zoroark VSTAR", set: "AR",  num: 188, variant: "AA",  total: 189, price:  200 },
+    // Crown Zenith Galarian Gallery (swsh12pt5gg) — Hisuian Zoroark VSTAR's
+    // canonical alt art lives at GG56/GG70, NOT AR #188/189 (that slot is
+    // Roxanne SAR).  Inception-candidates.md v0.1 had this wrong; corrected v0.9.
+    { name: "Hisuian Zoroark VSTAR", set: "CZ",  num:  56, variant: "GG",  total:  70, price:  200 },
     // Obsidian Flames (sv3)
     { name: "Charizard ex OF",       set: "OF",  num: 215, variant: "SIR", total: 197, price:  800 },
     // Paldean Fates (sv4pt5)
