@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 import PokeperpLogo from "./PokeperpLogo";
+import XIcon from "./XIcon";
 
 export default function Nav() {
   return (
@@ -21,6 +22,16 @@ export default function Nav() {
           <NavLink href="/">Index</NavLink>
           <NavLink href="/trade">Trade</NavLink>
           <NavLink href="/portfolio">Portfolio</NavLink>
+          <a
+            href="https://x.com/PokePerp"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Follow @PokePerp on X"
+            title="Follow @PokePerp on X"
+            className="ml-1 p-2 rounded-md text-[rgb(var(--muted))] hover:text-white hover:bg-[rgb(var(--background-elevated))] transition-colors"
+          >
+            <XIcon size={14} />
+          </a>
           <div className="ml-2">
             <WalletMultiButton />
           </div>

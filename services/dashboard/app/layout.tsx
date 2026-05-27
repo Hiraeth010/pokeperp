@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter, Russo_One } from "next/font/google";
 import WalletProvider from "@/components/WalletProvider";
 import Nav from "@/components/Nav";
+import DevnetBanner from "@/components/DevnetBanner";
 
 const body = Inter({
   subsets: ["latin"],
@@ -32,6 +33,9 @@ export default function RootLayout({
     <html lang="en" className={`${body.variable} ${display.variable}`}>
       <body className="font-sans">
         <WalletProvider>
+          {/* Devnet warning — sits above the nav so it's the first thing visitors
+              see. Remove this when we point at mainnet. */}
+          <DevnetBanner />
           <Nav />
           <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
           <footer className="max-w-6xl mx-auto px-4 py-10 mt-12 text-center text-[10px] text-[rgb(var(--muted))]">
