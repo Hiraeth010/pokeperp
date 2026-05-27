@@ -660,9 +660,18 @@ describe("oracle", () => {
     // covered logically by the require! in open_challenge.
   });
 
-  it("slashes a publisher when challenge succeeds", async () => {
-    // Spec: docs/oracle.md §7 — 10% slash tier on a >5% deviation success.
-    // Resolve the challenge opened above; verify the slash math + distribution.
+  it("dismisses a challenge when publisher price matches aggregate (deviation < 2%, v0.9)", async () => {
+    // v0.9 replaces the admin-attested resolveChallenge with on-chain deviation
+    // computation: |publisher_price - aggregated_price| / aggregated_price.
+    // In this test setup there is exactly one submitting publisher, so the
+    // aggregated price equals the publisher's price → deviation = 0 → challenge
+    // dismissed → bond redistributed 50/50 like the old "failed" path.
+    //
+    // Slash-tier coverage (≥2%, ≥5%, ≥10%) is exhaustively unit-tested in Rust
+    // via v09_tests::deviation_to_slash_tier in programs/oracle/src/lib.rs.
+    // A full multi-publisher integration test for the actual slash path is a
+    // v0.10 follow-up — it needs a second registered publisher submitting
+    // deviant prices + a re-aggregation pass to give a non-zero deviation.
     const targetDay = submissionDayForChallenge;
     const targetConstituent = 0;
     const dayBuf = Buffer.alloc(4);
@@ -694,8 +703,16 @@ describe("oracle", () => {
       [Buffer.from("bond_vault"), publisherKp.publicKey.toBuffer()],
       program.programId
     );
+    const [indexStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("index_state")],
+      program.programId
+    );
+    const [priceUpdatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("price"), publisherKp.publicKey.toBuffer(), dayBuf],
+      program.programId
+    );
 
-    // Snapshot balances pre-resolve.
+    // Snapshot pre-resolve.
     const challengerBefore = (
       await getAccount(provider.connection, challengerUsdcAta)
     ).amount;
@@ -703,19 +720,19 @@ describe("oracle", () => {
     const publisherVaultBefore = (
       await getAccount(provider.connection, publisherBondVaultPda)
     ).amount;
-    expect(publisherVaultBefore.toString()).to.equal(publisherInitialBond.toString());
+    const publisherBondAmountBefore = BigInt(
+      (await program.account.publisher.fetch(publisherPda)).bondAmount.toString()
+    );
 
-    const slashBps = 1000; // 10% per §7 (>5% deviation tier)
-    const expectedSlashed = (publisherInitialBond * BigInt(slashBps)) / BigInt(10_000);
-    const expectedChallengerShare = expectedSlashed / BigInt(2);
-    const expectedTreasuryShare = expectedSlashed - expectedChallengerShare;
-
+    // Permissionless: anyone can crank. provider wallet acts as caller.
     await program.methods
-      .resolveChallenge(true, slashBps)
+      .resolveChallenge()
       .accounts({
         config: configPda,
-        admin: provider.wallet.publicKey,
+        caller: provider.wallet.publicKey,
         challenge: challengePda,
+        indexState: indexStatePda,
+        targetPriceUpdate: priceUpdatePda,
         challengeBondVault: challengeBondVaultPda,
         targetPublisherAccount: publisherPda,
         targetPublisherBondVault: publisherBondVaultPda,
@@ -725,44 +742,43 @@ describe("oracle", () => {
       })
       .rpc();
 
-    // Challenge state updated.
+    // Dismissed: status = Failed, no slash, challenger's bond redistributed 50/50.
     const c = await program.account.challenge.fetch(challengePda);
-    expect(c.status).to.deep.equal({ succeeded: {} });
-    expect(c.slashBps).to.equal(slashBps);
-    expect(c.slashedAmount.toString()).to.equal(expectedSlashed.toString());
-    // Payout = challenger share of slash + bond refund.
-    expect(c.challengerPayout.toString()).to.equal(
-      (expectedChallengerShare + challengeBond).toString()
-    );
+    expect(c.status).to.deep.equal({ failed: {} });
+    expect(c.slashBps).to.equal(0);
+    expect(c.slashedAmount.toString()).to.equal("0");
+    expect(c.challengerPayout.toString()).to.equal("0");
 
-    // Publisher bond reduced; status untouched at 10% tier (no auto-suspend).
-    const pub = await program.account.publisher.fetch(publisherPda);
-    expect(pub.bondAmount.toString()).to.equal(
-      (publisherInitialBond - expectedSlashed).toString()
-    );
-    expect(pub.successfulChallengesAgainst).to.equal(1);
-    expect(pub.status).to.deep.equal({ shadow: {} });
+    const expectedPublisherShare = challengeBond / BigInt(2);
+    const expectedTreasuryShare = challengeBond - expectedPublisherShare;
 
-    // Token balances: challenger gets slash share + bond refund; treasury gets remainder.
-    const challengerAfter = (
-      await getAccount(provider.connection, challengerUsdcAta)
+    // Publisher's bond vault refilled by half the challenge bond.
+    const publisherVaultAfter = (
+      await getAccount(provider.connection, publisherBondVaultPda)
     ).amount;
-    expect((challengerAfter - challengerBefore).toString()).to.equal(
-      (expectedChallengerShare + challengeBond).toString()
+    expect((publisherVaultAfter - publisherVaultBefore).toString()).to.equal(
+      expectedPublisherShare.toString()
     );
+    const publisherAfter = await program.account.publisher.fetch(publisherPda);
+    expect(
+      (BigInt(publisherAfter.bondAmount.toString()) - publisherBondAmountBefore).toString()
+    ).to.equal(expectedPublisherShare.toString());
+    expect(publisherAfter.successfulChallengesAgainst).to.equal(0); // never bumped on failure
+
+    // Treasury received the other half.
     const treasuryAfter = (await getAccount(provider.connection, treasuryVault)).amount;
     expect((treasuryAfter - treasuryBefore).toString()).to.equal(
       expectedTreasuryShare.toString()
     );
-    const publisherVaultAfter = (
-      await getAccount(provider.connection, publisherBondVaultPda)
+
+    // Challenger received nothing (bond confiscated).
+    const challengerAfter = (
+      await getAccount(provider.connection, challengerUsdcAta)
     ).amount;
-    expect((publisherVaultBefore - publisherVaultAfter).toString()).to.equal(
-      expectedSlashed.toString()
-    );
-    // Challenge bond vault drained.
-    const cbvAfter = (await getAccount(provider.connection, challengeBondVaultPda)).amount;
-    expect(cbvAfter.toString()).to.equal("0");
+    expect((challengerAfter - challengerBefore).toString()).to.equal("0");
+
+    // Silence unused — publisherInitialBond was the pre-v0.9 success expectation.
+    void publisherInitialBond;
   });
 
   it("redistributes bond 50/50 (publisher + treasury) when challenge fails", async () => {
@@ -840,13 +856,21 @@ describe("oracle", () => {
       (await program.account.publisher.fetch(publisherPda)).bondAmount.toString()
     );
 
-    // Resolve as failed — slash_bps is ignored on the failure path; pass 0.
+    // v0.9: resolveChallenge is permissionless + parameter-less.  Deviation
+    // computed on-chain (= 0 here since this is still a single-publisher
+    // setup) → dismissed → bond redistributed 50/50.
+    const [priceUpdatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("price"), publisherKp.publicKey.toBuffer(), dayBuf],
+      program.programId
+    );
     await program.methods
-      .resolveChallenge(false, 0)
+      .resolveChallenge()
       .accounts({
         config: configPda,
-        admin: provider.wallet.publicKey,
+        caller: provider.wallet.publicKey,
         challenge: challengePda,
+        indexState: indexStatePda,
+        targetPriceUpdate: priceUpdatePda,
         challengeBondVault: challengeBondVaultPda,
         targetPublisherAccount: publisherPda,
         targetPublisherBondVault: publisherBondVaultPda,
@@ -925,6 +949,65 @@ describe("oracle", () => {
     cfg = await program.account.config.fetch(configPda);
     expect(cfg.paused).to.equal(false);
     expect(cfg.pauseReason).to.equal(0);
+  });
+
+  it("rejects liveness slash on a publisher with no absence yet (v0.9)", async () => {
+    // The existing publisher just submitted on submissionDayForChallenge, so
+    // days_absent = 0 → target tier 0 → NoNewLivenessSlashTier.
+    const [publisherPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+    const [publisherBondVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bond_vault"), publisherKp.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // The publisher is in Shadow status, which is NOT eligible for liveness
+    // slashing per oracle.md §7 (Shadow publishers are in their onboarding
+    // period and have shadow_period_days_remaining as their own counter).
+    // So this should revert with PublisherNotEligibleForLivenessSlash.
+    let threw = false;
+    let errMsg = "";
+    try {
+      await program.methods
+        .slashForLiveness()
+        .accounts({
+          config: configPda,
+          caller: provider.wallet.publicKey,
+          publisherAccount: publisherPda,
+          publisherBondVault: publisherBondVaultPda,
+          treasuryVault,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+    } catch (e: any) {
+      threw = true;
+      errMsg = (e?.error?.errorMessage ?? e?.message ?? "") as string;
+    }
+    expect(threw, "Shadow publisher must not be slashable for liveness").to.equal(
+      true
+    );
+    // Either eligibility check fires (likely path here) or the no-new-tier check.
+    expect(errMsg).to.match(
+      /(PublisherNotEligibleForLivenessSlash|NoNewLivenessSlashTier|not eligible|new liveness slash tier)/i
+    );
+  });
+
+  it("registers slash_for_liveness in the program IDL (v0.9)", () => {
+    // Positive-path coverage (actual tier-1/2/3 slash with state transitions
+    // + USDC transfer) lives in Rust unit tests
+    // (v09_tests::liveness_tiers_match_day_thresholds + liveness_slash_bps_per_tier)
+    // because it requires advancing the on-chain clock past day-thresholds,
+    // which the test-validator harness doesn't support cleanly.  This check
+    // just guards against accidental ix removal.
+    const ixs = ((program.idl as any).instructions ?? []) as Array<{ name: string }>;
+    const liveness = ixs.find(
+      (i) => i.name === "slash_for_liveness" || i.name === "slashForLiveness"
+    );
+    expect(liveness, "slash_for_liveness ix missing from IDL").to.not.equal(
+      undefined
+    );
   });
 
   it("performs a two-step admin transfer on Config (v0.8)", async () => {

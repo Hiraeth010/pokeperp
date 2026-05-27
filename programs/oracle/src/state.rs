@@ -46,6 +46,13 @@ pub struct Publisher {
     pub total_submissions: u64,
     pub successful_challenges_against: u32,
     pub last_submitted_day: u32,
+    /// v0.9 liveness slashing: highest tier that has already been applied for
+    /// the current absence gap.  0 = no liveness slash pending; 1/2/3 = the
+    /// 5%/25%/100% tiers from oracle.md §7.  Resets to 0 whenever the publisher
+    /// makes a successful submission, so each fresh absence gap can re-tier
+    /// from scratch.  Prevents double-slashing the same gap if `slash_for_liveness`
+    /// is cranked multiple times within a tier.
+    pub last_liveness_slash_tier: u8,
     pub bump: u8,
 }
 

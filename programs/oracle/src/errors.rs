@@ -46,4 +46,14 @@ pub enum OracleError {
     PublisherBondVaultMismatch,
     #[msg("Challenge target publisher does not match passed Publisher account")]
     ChallengeTargetMismatch,
+    #[msg("Publisher is not eligible for liveness slashing (Shadow or Removed)")]
+    PublisherNotEligibleForLivenessSlash,
+    #[msg("Publisher absence has not crossed a new liveness slash tier")]
+    NoNewLivenessSlashTier,
+    #[msg("IndexState day does not match the challenge target day")]
+    ChallengeIndexStateMismatch,
+    #[msg("Passed PriceUpdate does not match the challenge's (publisher, day)")]
+    ChallengePriceUpdateMismatch,
+    #[msg("Aggregated price for the challenged constituent is zero — cannot compute deviation")]
+    ChallengeReferencePriceZero,
 }

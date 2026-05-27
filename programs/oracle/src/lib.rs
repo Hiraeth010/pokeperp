@@ -99,6 +99,7 @@ pub mod oracle {
         publisher.total_submissions = 0;
         publisher.successful_challenges_against = 0;
         publisher.last_submitted_day = 0;
+        publisher.last_liveness_slash_tier = 0; // v0.9: no liveness slash pending at registration
         publisher.bump = ctx.bumps.publisher_account;
 
         // Bump config's publisher counter.
@@ -251,6 +252,9 @@ pub mod oracle {
             .checked_add(1)
             .ok_or(OracleError::InvalidConfig)?;
         publisher.last_submitted_day = day;
+        // v0.9: a successful submission ends any in-flight liveness-slash gap,
+        // so reset the tier-applied marker.  The next absence starts fresh.
+        publisher.last_liveness_slash_tier = 0;
 
         Ok(())
     }
@@ -442,34 +446,35 @@ pub mod oracle {
         Ok(())
     }
 
-    /// Resolve an open challenge (admin-resolved in v0.5; committee multisig is v0.6+).
+    /// Resolve an open challenge — **permissionless and fully on-chain (v0.9)**.
     ///
-    /// `slash_bps` is only meaningful when `challenge_succeeded == true`. Spec §7 tiers:
-    ///   - 1000 (10%)  → price off by >5% from corrected median, 1-month suspension
-    ///   - 5000 (50%)  → price off by >15%, 6-month suspension
-    ///   - 10000 (100%) → demonstrable collusion, permanent removal
-    /// On failure pass any value (ignored).
+    /// Replaces the v0.5–v0.8 admin-attested path: instead of the admin passing
+    /// `challenge_succeeded` + `slash_bps`, this ix reads the publisher's actual
+    /// submitted price for the challenged constituent and the protocol's
+    /// aggregated price on that day, computes the deviation arithmetically, and
+    /// maps to a slash tier per oracle.md §7:
     ///
-    /// **Success cash flow**:
-    ///   slashed_amount = publisher.bond_amount × slash_bps / 10_000
-    ///   - slashed_amount/2 → challenger USDC ATA
-    ///   - remainder       → protocol treasury vault
-    ///   - challenger bond refunded in full
-    ///   - publisher.bond_amount decreases; status → Suspended (≥5000) or Removed (10000)
+    ///   deviation < 2%       → challenge FAILS (within market noise)
+    ///   deviation 2% – <5%   → 10% slash (warning level)
+    ///   deviation 5% – <10%  → 50% slash + status → Suspended
+    ///   deviation ≥ 10%      → 100% slash + status → Removed
     ///
-    /// **Failure cash flow**: challenger bond split 50/50 → publisher bond vault (refill,
-    /// increments publisher.bond_amount) and protocol treasury vault.
+    /// Deviation is `|publisher_price − aggregated_price| / aggregated_price`,
+    /// scaled to basis points.  The aggregated price is the median across all
+    /// submitting publishers for that day, finalized into `IndexState`.  A
+    /// publisher whose submission lands close to the median can't be slashed
+    /// regardless of who challenges them; one that lands far from the median
+    /// gets slashed proportionally with no admin discretion.
     ///
-    /// **v0.5 scope cut**: spec §7's "25% to remaining publishers" distribution on success
-    /// is rolled into the 50% treasury share (no N-publisher fan-out yet). Liveness slashing
-    /// is a separate mechanism, also deferred.
+    /// Cash flows are unchanged from v0.5:
+    ///   - Success: slashed_amount = publisher.bond × slash_bps / 10_000.
+    ///     50% → challenger USDC ATA, 50% → protocol treasury vault. Challenger
+    ///     bond refunded in full.
+    ///   - Failure: challenger bond split 50/50 → publisher bond vault (refill)
+    ///     + protocol treasury vault.
     ///
     /// Spec: docs/oracle.md §6 resolution + §7 slashing schedule + flow.
-    pub fn resolve_challenge(
-        ctx: Context<ResolveChallenge>,
-        challenge_succeeded: bool,
-        slash_bps: u16,
-    ) -> Result<()> {
+    pub fn resolve_challenge(ctx: Context<ResolveChallenge>) -> Result<()> {
         require!(!ctx.accounts.config.paused, OracleError::OraclePaused);
         require!(
             ctx.accounts.config.protocol_treasury_vault != Pubkey::default(),
@@ -528,15 +533,47 @@ pub mod oracle {
         ];
         let pbv_signer = &[pbv_seeds];
 
+        // ----- v0.9 on-chain deviation computation -----
+        // Read the publisher's submitted price for the challenged constituent
+        // and the aggregated (median) price from IndexState.  Compute the
+        // absolute deviation in bps and map to a slash tier — no admin
+        // discretion involved.
+        let constituent_idx = target_constituent as usize;
+        require!(constituent_idx < 25, OracleError::InvalidConfig);
+
+        let aggregated_price =
+            ctx.accounts.index_state.aggregated_prices[constituent_idx];
+
+        // If the aggregated price is zero, the constituent went stale that day
+        // (insufficient publishers per Config.min_publishers_per_day, see
+        // aggregate_day's all-stale path).  There's no consensus to measure
+        // deviation against — dismiss the challenge.  This is also the right
+        // behavior in production: a publisher whose submission landed on a
+        // low-consensus day shouldn't be slashable via challenge for it.
+        let (challenge_succeeded, slash_bps) = if aggregated_price == 0 {
+            (false, 0u16)
+        } else {
+            let publisher_price =
+                ctx.accounts.target_price_update.prices[constituent_idx];
+            let diff = if publisher_price > aggregated_price {
+                publisher_price - aggregated_price
+            } else {
+                aggregated_price - publisher_price
+            };
+            // bps = diff * 10_000 / aggregated_price.  u128 to avoid overflow
+            // on large prices; the result fits in u32 even at 10000+ bps.
+            let deviation_bps = (diff as u128)
+                .checked_mul(10_000)
+                .and_then(|x| x.checked_div(aggregated_price as u128))
+                .ok_or(OracleError::InvalidConfig)? as u32;
+            deviation_to_slash_tier(deviation_bps)
+        };
+
         let mut slashed_amount: u64 = 0;
         let mut challenger_payout: u64 = 0;
         let mut effective_slash_bps: u16 = 0;
 
         if challenge_succeeded {
-            require!(
-                slash_bps == 1_000 || slash_bps == 5_000 || slash_bps == 10_000,
-                OracleError::InvalidSlashSeverity
-            );
 
             // Compute slash amount against the publisher's *current* effective bond.
             let publisher_bond = ctx.accounts.target_publisher_account.bond_amount;
@@ -687,6 +724,103 @@ pub mod oracle {
         Ok(())
     }
 
+    /// Liveness slashing — anyone can crank this against a publisher whose
+    /// last submission is sufficiently far in the past (v0.9).  Tiered per
+    /// oracle.md §7:
+    ///
+    ///   days absent ≥ 3  → tier 1 :  5% of current bond slashed
+    ///   days absent ≥ 7  → tier 2 : 25% of current bond slashed + Suspended
+    ///   days absent ≥ 14 → tier 3 :100% of current bond slashed + Removed
+    ///
+    /// `last_liveness_slash_tier` on Publisher tracks the highest tier already
+    /// applied to the *current* absence gap; this ix requires the target tier
+    /// to be strictly higher than that, which prevents repeatedly slashing
+    /// inside a tier (calling on day 4 and again on day 5 = no double tier-1).
+    /// The counter resets to 0 on the publisher's next successful submission,
+    /// so a publisher who returns after a 5% slash can be tier-1-slashed
+    /// again on a fresh gap weeks later.
+    ///
+    /// Only Active or Suspended publishers are eligible.  Shadow publishers
+    /// haven't activated yet (and have shadow_period_days_remaining instead);
+    /// Removed publishers have nothing left to slash.  Slashed funds route
+    /// 100% to the protocol treasury (no challenger to split with).
+    pub fn slash_for_liveness(ctx: Context<SlashForLiveness>) -> Result<()> {
+        require!(!ctx.accounts.config.paused, OracleError::OraclePaused);
+        require!(
+            ctx.accounts.config.protocol_treasury_vault != Pubkey::default(),
+            OracleError::TreasuryNotConfigured
+        );
+        require!(
+            ctx.accounts.treasury_vault.key()
+                == ctx.accounts.config.protocol_treasury_vault,
+            OracleError::TreasuryVaultMismatch
+        );
+        require!(
+            ctx.accounts.publisher_account.bond_vault
+                == ctx.accounts.publisher_bond_vault.key(),
+            OracleError::PublisherBondVaultMismatch
+        );
+
+        let publisher = &ctx.accounts.publisher_account;
+        require!(
+            publisher.status == PublisherStatus::Active
+                || publisher.status == PublisherStatus::Suspended,
+            OracleError::PublisherNotEligibleForLivenessSlash
+        );
+
+        let current_day = current_unix_day()?;
+        let days_absent = current_day.saturating_sub(publisher.last_submitted_day);
+
+        // Tier thresholds + slash bps come from pure helpers so they're unit-testable.
+        let target_tier = days_absent_to_tier(days_absent);
+        require!(
+            target_tier > publisher.last_liveness_slash_tier,
+            OracleError::NoNewLivenessSlashTier
+        );
+        let slash_bps = liveness_tier_to_slash_bps(target_tier);
+
+        let current_bond = publisher.bond_amount;
+        let slash_amount = ((current_bond as u128) * (slash_bps as u128) / 10_000) as u64;
+
+        if slash_amount > 0 {
+            let pub_key = publisher.publisher_key;
+            let bond_bump = ctx.bumps.publisher_bond_vault;
+            let seeds: &[&[u8]] = &[
+                BOND_VAULT_SEED,
+                pub_key.as_ref(),
+                std::slice::from_ref(&bond_bump),
+            ];
+            let signer = &[seeds];
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.publisher_bond_vault.to_account_info(),
+                        to: ctx.accounts.treasury_vault.to_account_info(),
+                        authority: ctx.accounts.publisher_bond_vault.to_account_info(),
+                    },
+                    signer,
+                ),
+                slash_amount,
+            )?;
+        }
+
+        // Apply state changes after the CPI succeeds.
+        let pub_acct = &mut ctx.accounts.publisher_account;
+        pub_acct.bond_amount = pub_acct
+            .bond_amount
+            .checked_sub(slash_amount)
+            .ok_or(OracleError::InvalidConfig)?;
+        pub_acct.last_liveness_slash_tier = target_tier;
+        match target_tier {
+            2 => pub_acct.status = PublisherStatus::Suspended,
+            3 => pub_acct.status = PublisherStatus::Removed,
+            _ => {} // tier 1: warning only, status unchanged
+        }
+
+        Ok(())
+    }
+
     /// Emergency pause the oracle (admin only).
     /// Spec: docs/oracle.md §9 failure modes.
     pub fn emergency_pause(ctx: Context<EmergencyPause>, reason: u8) -> Result<()> {
@@ -816,6 +950,109 @@ pub struct RegisterPublisher<'info> {
 fn current_unix_day() -> Result<u32> {
     let clock = Clock::get()?;
     Ok((clock.unix_timestamp / 86400) as u32)
+}
+
+/// v0.9 challenge-resolution helper: deviation (in bps) → (challenge_succeeded,
+/// slash_bps).  Pure function so it can be unit-tested without on-chain setup.
+/// Thresholds per oracle.md §7:
+///   <200 bps  (2%)  : within market noise → challenge dismissed
+///   <500 bps  (5%)  : 10% slash tier (warning)
+///   <1000 bps (10%) : 50% slash tier (Suspended)
+///   ≥1000 bps       : 100% slash tier (Removed)
+pub fn deviation_to_slash_tier(deviation_bps: u32) -> (bool, u16) {
+    if deviation_bps < 200 {
+        (false, 0)
+    } else if deviation_bps < 500 {
+        (true, 1_000)
+    } else if deviation_bps < 1_000 {
+        (true, 5_000)
+    } else {
+        (true, 10_000)
+    }
+}
+
+/// v0.9 liveness-slashing helper: days_absent → tier (0/1/2/3).  Pure function
+/// so it's unit-testable.  Thresholds per oracle.md §7:
+///   <3 days  : no tier (caller should reject with NoNewLivenessSlashTier)
+///   3–6 days : tier 1 (5% slash)
+///   7–13 days: tier 2 (25% slash + Suspended)
+///   ≥14 days : tier 3 (100% slash + Removed)
+pub fn days_absent_to_tier(days_absent: u32) -> u8 {
+    if days_absent >= 14 {
+        3
+    } else if days_absent >= 7 {
+        2
+    } else if days_absent >= 3 {
+        1
+    } else {
+        0
+    }
+}
+
+/// v0.9 liveness-slashing helper: tier → slash_bps (basis points of current bond).
+pub fn liveness_tier_to_slash_bps(tier: u8) -> u16 {
+    match tier {
+        1 => 500,
+        2 => 2_500,
+        3 => 10_000,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod v09_tests {
+    use super::*;
+
+    #[test]
+    fn deviation_below_2pct_dismisses() {
+        assert_eq!(deviation_to_slash_tier(0), (false, 0));
+        assert_eq!(deviation_to_slash_tier(50), (false, 0));
+        assert_eq!(deviation_to_slash_tier(199), (false, 0));
+    }
+
+    #[test]
+    fn deviation_2_to_5_pct_is_tier_1() {
+        assert_eq!(deviation_to_slash_tier(200), (true, 1_000));
+        assert_eq!(deviation_to_slash_tier(300), (true, 1_000));
+        assert_eq!(deviation_to_slash_tier(499), (true, 1_000));
+    }
+
+    #[test]
+    fn deviation_5_to_10_pct_is_tier_2() {
+        assert_eq!(deviation_to_slash_tier(500), (true, 5_000));
+        assert_eq!(deviation_to_slash_tier(750), (true, 5_000));
+        assert_eq!(deviation_to_slash_tier(999), (true, 5_000));
+    }
+
+    #[test]
+    fn deviation_at_or_above_10pct_is_tier_3() {
+        assert_eq!(deviation_to_slash_tier(1_000), (true, 10_000));
+        assert_eq!(deviation_to_slash_tier(5_000), (true, 10_000));
+        assert_eq!(deviation_to_slash_tier(10_000), (true, 10_000));
+        // Even far-out values cap at the tier 3 outcome (100% slash) — the
+        // numeric value of slash_bps doesn't exceed 10_000.
+        assert_eq!(deviation_to_slash_tier(50_000), (true, 10_000));
+    }
+
+    #[test]
+    fn liveness_tiers_match_day_thresholds() {
+        assert_eq!(days_absent_to_tier(0), 0);
+        assert_eq!(days_absent_to_tier(2), 0);
+        assert_eq!(days_absent_to_tier(3), 1);
+        assert_eq!(days_absent_to_tier(6), 1);
+        assert_eq!(days_absent_to_tier(7), 2);
+        assert_eq!(days_absent_to_tier(13), 2);
+        assert_eq!(days_absent_to_tier(14), 3);
+        assert_eq!(days_absent_to_tier(365), 3);
+    }
+
+    #[test]
+    fn liveness_slash_bps_per_tier() {
+        assert_eq!(liveness_tier_to_slash_bps(0), 0);
+        assert_eq!(liveness_tier_to_slash_bps(1), 500);
+        assert_eq!(liveness_tier_to_slash_bps(2), 2_500);
+        assert_eq!(liveness_tier_to_slash_bps(3), 10_000);
+    }
 }
 
 #[derive(Accounts)]
@@ -1051,14 +1288,15 @@ pub struct SetProtocolTreasury<'info> {
 
 #[derive(Accounts)]
 pub struct ResolveChallenge<'info> {
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.bump,
-        constraint = config.admin == admin.key() @ OracleError::Unauthorized,
-    )]
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
 
-    pub admin: Signer<'info>,
+    /// v0.9: permissionless — anyone can crank a challenge resolution because
+    /// the slash decision is computed arithmetically from on-chain state.
+    /// The caller still pays the tx fee; in practice the challenger themselves
+    /// has the strongest incentive to call this (they get their bond back +
+    /// reward on success).
+    pub caller: Signer<'info>,
 
     #[account(
         mut,
@@ -1071,6 +1309,33 @@ pub struct ResolveChallenge<'info> {
         bump = challenge.bump,
     )]
     pub challenge: Box<Account<'info, Challenge>>,
+
+    /// IndexState for the challenged day — the aggregated (median) price the
+    /// deviation is measured against.  Pinned to challenge.target_day so
+    /// callers can't substitute a different day's index to game the math.
+    #[account(
+        seeds = [INDEX_STATE_SEED],
+        bump = index_state.bump,
+        constraint = index_state.day == challenge.target_day @ OracleError::ChallengeIndexStateMismatch,
+    )]
+    pub index_state: Box<Account<'info, IndexState>>,
+
+    /// The challenged publisher's actual PriceUpdate for the challenged day —
+    /// the submission whose deviation is being judged.  PDA is per-
+    /// (publisher, day), so the seed constraint already pins it to the right
+    /// (publisher, day) pair; the explicit `constraint =` is belt-and-braces.
+    #[account(
+        seeds = [
+            PRICE_UPDATE_SEED,
+            challenge.target_publisher.as_ref(),
+            &challenge.target_day.to_le_bytes(),
+        ],
+        bump = target_price_update.bump,
+        constraint = target_price_update.publisher == challenge.target_publisher
+            && target_price_update.day == challenge.target_day
+            @ OracleError::ChallengePriceUpdateMismatch,
+    )]
+    pub target_price_update: Box<Account<'info, PriceUpdate>>,
 
     /// Per-challenge bond escrow holding the challenger's stake.
     #[account(
@@ -1108,6 +1373,36 @@ pub struct ResolveChallenge<'info> {
 
     /// Protocol treasury USDC vault — validated against `config.protocol_treasury_vault`
     /// in the handler. Note this is a perp-engine PDA; oracle has no authority over it.
+    #[account(mut)]
+    pub treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+/// Permissionless liveness-slashing crank (v0.9).
+#[derive(Accounts)]
+pub struct SlashForLiveness<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    pub caller: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [PUBLISHER_SEED, publisher_account.publisher_key.as_ref()],
+        bump = publisher_account.bump,
+    )]
+    pub publisher_account: Box<Account<'info, Publisher>>,
+
+    #[account(
+        mut,
+        seeds = [BOND_VAULT_SEED, publisher_account.publisher_key.as_ref()],
+        bump,
+    )]
+    pub publisher_bond_vault: Box<Account<'info, TokenAccount>>,
+
+    /// Protocol treasury USDC vault — validated against `config.protocol_treasury_vault`
+    /// in the handler.  All slashed funds route here (no challenger to split with).
     #[account(mut)]
     pub treasury_vault: Box<Account<'info, TokenAccount>>,
 
