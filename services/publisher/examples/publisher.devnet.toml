@@ -11,8 +11,12 @@
 #   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run
 
 [identity]
-publisher_keypair_path = "C:/Users/Admin/.config/solana/id.json"
-publisher_pubkey = "4HFrD7pzn72rqmGwadV7AouYLiFSfuLtgL4LWMVXQpG9"
+# Pointing at publisher-3.  Pub-2's PriceUpdate for day 20599 hit transient
+# Oxylabs 613s on slots 1+4 (Rayquaza, Sylveon), forcing a stale fallback for
+# those two — pub-3 is a fresh PDA slot so we can submit a clean PriceUpdate
+# with real data for all 25 constituents.
+publisher_keypair_path = "./devnet-keys/publisher-3.json"
+publisher_pubkey = "G3LnXi6YWXXoAQr8CFm8gnvyjZJ6fpnmX66RK6sKzCrS"
 
 [oracle]
 rpc_url = "https://api.devnet.solana.com"

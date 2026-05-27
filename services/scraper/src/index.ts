@@ -116,42 +116,101 @@ function buildEbayUrl(query: string): string {
   return `https://www.ebay.com/sch/i.html?${params.toString()}`;
 }
 
-/** Submit one search URL to Oxylabs, return raw HTML. */
+/** Submit one search URL to Oxylabs, return raw HTML.
+ *
+ *  Retries up to 2 additional times (3 total attempts) on transient Oxylabs
+ *  failures — most commonly upstream `status_code: 613` ("no results / parse
+ *  failed"), which empirically resolves on retry because Oxylabs rotates to a
+ *  different residential IP + retries eBay on its side.  Backs off 2s, then
+ *  4s between attempts to give Oxylabs's internal queues breathing room.
+ *
+ *  Retryable signals:
+ *    - upstream status_code != 200 (613, 612, etc — eBay-side rejections)
+ *    - Oxylabs HTTP 5xx (their infra hiccup)
+ *    - empty content despite 200 (parsing issue)
+ *
+ *  Non-retryable: 401 auth failures, 400 malformed requests — caller bug,
+ *  retrying won't help. */
 async function fetchViaOxylabs(url: string): Promise<string> {
-  const resp = await fetch("https://realtime.oxylabs.io/v1/queries", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization:
-        "Basic " +
-        Buffer.from(`${OXYLABS_USER}:${OXYLABS_PASS}`).toString("base64"),
-    },
-    body: JSON.stringify({
-      source: "universal",
-      url,
-      render: "html",
-      geo_location: OXYLABS_GEO,
-    }),
-    signal: AbortSignal.timeout(90_000),
-  });
+  const MAX_ATTEMPTS = 3;
+  let lastErr: Error | null = null;
 
-  if (!resp.ok) {
-    throw new Error(`oxylabs HTTP ${resp.status}: ${await resp.text()}`);
-  }
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fetch("https://realtime.oxylabs.io/v1/queries", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization:
+            "Basic " +
+            Buffer.from(`${OXYLABS_USER}:${OXYLABS_PASS}`).toString("base64"),
+        },
+        body: JSON.stringify({
+          source: "universal",
+          url,
+          render: "html",
+          geo_location: OXYLABS_GEO,
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
 
-  const payload = (await resp.json()) as {
-    results?: Array<{ status_code: number; content?: string; url?: string }>;
-    errors?: unknown;
-  };
-  if (payload.errors) {
-    throw new Error(`oxylabs errors: ${JSON.stringify(payload.errors)}`);
+      // Auth + malformed-request errors are caller bugs; don't retry.
+      if (resp.status === 401 || resp.status === 400) {
+        throw new Error(`oxylabs HTTP ${resp.status}: ${await resp.text()}`);
+      }
+      if (!resp.ok) {
+        throw new RetryableError(
+          `oxylabs HTTP ${resp.status}: ${await resp.text()}`,
+        );
+      }
+
+      const payload = (await resp.json()) as {
+        results?: Array<{ status_code: number; content?: string; url?: string }>;
+        errors?: unknown;
+      };
+      if (payload.errors) {
+        throw new RetryableError(
+          `oxylabs errors: ${JSON.stringify(payload.errors)}`,
+        );
+      }
+      const first = payload.results?.[0];
+      if (!first) throw new RetryableError("oxylabs: no results in response");
+      if (first.status_code !== 200) {
+        throw new RetryableError(`oxylabs upstream status ${first.status_code}`);
+      }
+      const content = first.content ?? "";
+      if (content.length < 1000) {
+        // Suspiciously small HTML = likely a redirect / CAPTCHA stub.  Retry.
+        throw new RetryableError(
+          `oxylabs returned ${content.length}-byte body (likely a stub)`,
+        );
+      }
+      if (attempt > 1) {
+        console.log(`  ✓ retry attempt ${attempt} succeeded`);
+      }
+      return content;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      const isRetryable = e instanceof RetryableError;
+      if (!isRetryable || attempt === MAX_ATTEMPTS) {
+        throw lastErr;
+      }
+      const backoffMs = 2_000 * attempt; // 2s, 4s
+      console.log(
+        `  ⚠ attempt ${attempt}/${MAX_ATTEMPTS} failed: ${lastErr.message.slice(0, 80)} — retrying in ${backoffMs}ms`,
+      );
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
   }
-  const first = payload.results?.[0];
-  if (!first) throw new Error("oxylabs: no results in response");
-  if (first.status_code !== 200) {
-    throw new Error(`oxylabs upstream status ${first.status_code}`);
+  throw lastErr ?? new Error("oxylabs: exhausted retries with no error");
+}
+
+/** Marker class so the retry loop knows to retry vs. abort. */
+class RetryableError extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "RetryableError";
   }
-  return first.content ?? "";
 }
 
 /** Parse eBay search HTML into listing records.  Selectors verified 2026-05-27;
