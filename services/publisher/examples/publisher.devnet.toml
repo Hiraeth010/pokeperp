@@ -1,0 +1,54 @@
+# Devnet publisher config — submits real eBay-derived prices to the live
+# devnet oracle via the Oxylabs-backed scraper service.
+#
+# Run once (current day - 1):
+#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run --once
+#
+# Run with on-chain submission disabled (dry run, prints the prices it would submit):
+#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run --once --dry-run
+#
+# Daemon (submits daily on schedule):
+#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run
+
+[identity]
+publisher_keypair_path = "C:/Users/Admin/.config/solana/id.json"
+publisher_pubkey = "4HFrD7pzn72rqmGwadV7AouYLiFSfuLtgL4LWMVXQpG9"
+
+[oracle]
+rpc_url = "https://api.devnet.solana.com"
+oracle_program_id = "GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i"
+commitment = "confirmed"
+
+[methodology]
+trim_top_pct = 10
+trim_bottom_pct = 10
+# Devnet single-publisher = no median across publishers, so we want enough
+# samples that one outlier doesn't dominate. Bump if scraper consistently
+# returns < 8 PSA 10 sales per query.
+min_sample_size = 5
+window_days_primary = 7
+window_days_fallback = [14, 30]
+stale_decay_pct_per_day = 0.5
+
+[sources]
+primary = "scraper"
+secondary = []
+
+# Scraper service URL. Set via env (SCRAPER_URL) or here.  Env wins.
+[sources.scraper]
+url = "https://pokeperps-production.up.railway.app"
+
+[schedule]
+submit_at_utc_hour = 22
+submit_at_utc_minute = 0
+retry_max_attempts = 3
+retry_backoff_seconds = 60
+
+[observability]
+metrics_port = 9100
+log_level = "info"
+log_format = "plain"
+
+[security]
+allow_dry_run_only = false
+require_sample_count_consistency = true

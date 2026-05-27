@@ -4,6 +4,7 @@
 pub mod card_codex;
 pub mod ebay_browse;
 pub mod pricecharting;
+pub mod scraper;
 
 use anyhow::Result;
 use async_trait::async_trait;

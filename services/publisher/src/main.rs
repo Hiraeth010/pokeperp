@@ -158,9 +158,14 @@ async fn run_daily(
                 .await
                 .context("compute_from_ebay")?
         }
+        "scraper" => {
+            compute_from_scraper(cfg, day, &constituents, state)
+                .await
+                .context("compute_from_scraper")?
+        }
         other => {
             return Err(anyhow!(
-                "unknown [sources] primary: {:?} (expected 'drift' or 'ebay_browse')",
+                "unknown [sources] primary: {:?} (expected 'drift', 'ebay_browse', or 'scraper')",
                 other
             ));
         }
@@ -296,9 +301,12 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
         "ebay_browse" => compute_from_ebay(cfg, day, &constituents, &mut verify_state)
             .await
             .context("compute_from_ebay")?,
+        "scraper" => compute_from_scraper(cfg, day, &constituents, &mut verify_state)
+            .await
+            .context("compute_from_scraper")?,
         other => {
             return Err(anyhow!(
-                "unknown [sources] primary: {:?} (expected 'drift' or 'ebay_browse')",
+                "unknown [sources] primary: {:?} (expected 'drift', 'ebay_browse', or 'scraper')",
                 other
             ));
         }
@@ -528,7 +536,49 @@ async fn compute_from_ebay(
     constituents: &[ConstituentInfo],
     state: &mut PublisherState,
 ) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
-    let source = build_ebay_source(cfg)?;
+    let source: Box<dyn PriceSource> = Box::new(build_ebay_source(cfg)?);
+    compute_from_source(source, cfg, day, constituents, state).await
+}
+
+/// v0.9: scrape-based price source. Calls our standalone services/scraper
+/// Node service (Oxylabs-backed eBay search), feeds the resulting listings
+/// into the same methodology pipeline as ebay_browse.  Used when the official
+/// Marketplace Insights tier isn't available.  Config: `[sources.scraper].url`
+/// or `SCRAPER_URL` env var.
+async fn compute_from_scraper(
+    cfg: &config::Config,
+    day: u32,
+    constituents: &[ConstituentInfo],
+    state: &mut PublisherState,
+) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
+    let url = std::env::var("SCRAPER_URL").ok().or_else(|| {
+        cfg.sources
+            .per_source
+            .get("scraper")
+            .and_then(|v| v.get("url"))
+            .and_then(|v| v.as_str().map(String::from))
+    });
+    let url = url.ok_or_else(|| {
+        anyhow!(
+            "scraper source requires SCRAPER_URL env var or [sources.scraper].url in config"
+        )
+    })?;
+    info!(scraper_url = %url, "using scraper source");
+    let source: Box<dyn PriceSource> = Box::new(sources::scraper::ScraperSource::new(url));
+    compute_from_source(source, cfg, day, constituents, state).await
+}
+
+/// Shared listing-source pipeline: iterate constituents, call the source for
+/// each, apply the methodology, fall back to Card-Codex aggregate, then to
+/// stale-decay.  Source-agnostic — works for ebay_browse, scraper, or any
+/// future `PriceSource` impl.
+async fn compute_from_source(
+    source: Box<dyn PriceSource>,
+    cfg: &config::Config,
+    day: u32,
+    constituents: &[ConstituentInfo],
+    state: &mut PublisherState,
+) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
     // Aggregate fallback (Card-Codex) is queried when the listing-based source
     // returns insufficient samples. Always-on for now — no config gate needed
     // because the per-card URL mapping returns None for cards Card-Codex
