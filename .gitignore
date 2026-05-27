@@ -21,6 +21,20 @@ out/
 # ============ Indexer runtime data ============
 services/indexer/data/*.jsonl
 
+# ============ Publisher runtime state ============
+# Tracks per-constituent last_fresh_day for stale-decay fallback.  Per-environment,
+# regenerated on every run — not source.
+services/publisher/examples/*.state.json
+
+# ============ Brand assets — raw card downloads ============
+# The X banner uses a few PMT25 card images embedded as base64.  We keep the
+# raw PNGs out of the repo to honor the README's "no bundled card art" policy
+# for the runtime dashboard.  Re-download via docs/brand/build-banner.ps1.
+docs/brand/card-src/
+
+# ============ Claude Code local state ============
+.claude/
+
 # ============ Env / secrets ============
 .env
 .env.local

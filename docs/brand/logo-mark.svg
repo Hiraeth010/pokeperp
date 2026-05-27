@@ -1,0 +1,133 @@
+<!--
+  Pokeperp logo mark — engraved Pokeball with "PokePerp" carved into the red half.
+
+  ViewBox is intentionally tight (32 32 448 448 — capturing exactly the pokeball
+  circle, no padding) so that when X / Discord / GitHub rasterize this SVG and
+  apply a circular crop for a profile picture, the pokeball fills the avatar
+  edge-to-edge.  An earlier 0 0 512 512 viewBox left a 32px transparent ring
+  around the ball which X was rasterizing as WHITE before cropping, producing
+  the visible white halo around the avatar.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="32 32 448 448" role="img" aria-label="PokePerp">
+  <title>PokePerp</title>
+  <defs>
+    <!-- Red half: warm highlight upper-left, deep crimson in the lower-right shadow -->
+    <linearGradient id="pp-red" x1="0.25" y1="0.05" x2="0.85" y2="0.95">
+      <stop offset="0%" stop-color="#FF8A8A"/>
+      <stop offset="25%" stop-color="#FF5757"/>
+      <stop offset="65%" stop-color="#DC2535"/>
+      <stop offset="100%" stop-color="#9C0E18"/>
+    </linearGradient>
+
+    <!-- White half: slightly cooler / less blasted-white tone so it harmonises
+         with dark UIs (X dark mode in particular).  Still reads as the iconic
+         pokeball white, just with more material depth. -->
+    <linearGradient id="pp-white" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#F2F2F6"/>
+      <stop offset="55%" stop-color="#D8D8E0"/>
+      <stop offset="100%" stop-color="#8E8E9A"/>
+    </linearGradient>
+
+    <!-- Band: matte dark with faint vertical sheen -->
+    <linearGradient id="pp-band" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#1A1A24"/>
+      <stop offset="50%" stop-color="#08080E"/>
+      <stop offset="100%" stop-color="#1A1A24"/>
+    </linearGradient>
+
+    <!-- Glassy highlight on the red half (the "shine") -->
+    <radialGradient id="pp-shine" cx="0.36" cy="0.28" r="0.32">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="35%" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Soft bottom shadow on the white half -->
+    <radialGradient id="pp-bottom-shade" cx="0.5" cy="0.85" r="0.45">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Button: subtle dome -->
+    <radialGradient id="pp-button" cx="0.4" cy="0.4" r="0.7">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="70%" stop-color="#EAEAF0"/>
+      <stop offset="100%" stop-color="#B8B8C4"/>
+    </radialGradient>
+
+    <!-- Subtle warm rim light catching the upper-right of the ball — gives the
+         icon a hint of "energy" / aliveness without breaking the silhouette. -->
+    <radialGradient id="pp-rim-light" cx="0.78" cy="0.18" r="0.30">
+      <stop offset="0%" stop-color="#FFD56B" stop-opacity="0.45"/>
+      <stop offset="60%" stop-color="#FFD56B" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#FFD56B" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Outer rim shadow so the silhouette reads on both light and dark backgrounds -->
+    <radialGradient id="pp-rim" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="92%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="98%" stop-color="#000000" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.06"/>
+    </radialGradient>
+
+    <!-- Carve arc and red-half clip for the engraved wordmark -->
+    <path id="pp-carve-arc" d="M 110 200 Q 256 80 402 200" fill="none"/>
+    <clipPath id="pp-red-clip">
+      <path d="M256 32 a224 224 0 0 1 222.88 196 H339.2 a84 84 0 0 0 -166.4 0 H33.12 A224 224 0 0 1 256 32 z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Top red half. Circle r=224 around (256,256); band thickness 56; button-bump r=84. -->
+  <path
+    d="M256 32 a224 224 0 0 1 222.88 196 H339.2 a84 84 0 0 0 -166.4 0 H33.12 A224 224 0 0 1 256 32 z"
+    fill="url(#pp-red)"/>
+
+  <!-- Bottom white half -->
+  <path
+    d="M256 480 a224 224 0 0 1 -222.88 -196 H172.8 a84 84 0 0 0 166.4 0 H478.88 A224 224 0 0 1 256 480 z"
+    fill="url(#pp-white)"/>
+
+  <!-- Soft shadow over the bottom of the white half -->
+  <path
+    d="M256 480 a224 224 0 0 1 -222.88 -196 H172.8 a84 84 0 0 0 166.4 0 H478.88 A224 224 0 0 1 256 480 z"
+    fill="url(#pp-bottom-shade)"/>
+
+  <!-- Engraved "PokePerp" on the red half -->
+  <g clip-path="url(#pp-red-clip)"
+     font-family="'Russo One', Impact, 'Arial Black', 'Helvetica Neue', sans-serif"
+     font-weight="900"
+     font-size="62"
+     letter-spacing="3"
+     text-anchor="middle">
+    <text fill="#000000" fill-opacity="0.55" transform="translate(0,-2.5)">
+      <textPath href="#pp-carve-arc" startOffset="50%">PokePerp</textPath>
+    </text>
+    <text fill="#FFE2DE" fill-opacity="0.45" transform="translate(0,2.5)">
+      <textPath href="#pp-carve-arc" startOffset="50%">PokePerp</textPath>
+    </text>
+    <text fill="#5C0610" fill-opacity="0.55">
+      <textPath href="#pp-carve-arc" startOffset="50%">PokePerp</textPath>
+    </text>
+  </g>
+
+  <!-- Black band -->
+  <path
+    d="M33.12 228 H172.8 a84 84 0 0 1 166.4 0 H478.88 a224.5 224.5 0 0 1 0 56 H339.2 a84 84 0 0 1 -166.4 0 H33.12 a224.5 224.5 0 0 1 0 -56 z"
+    fill="url(#pp-band)"/>
+
+  <!-- Center button -->
+  <circle cx="256" cy="256" r="60" fill="#08080E"/>
+  <circle cx="256" cy="256" r="38" fill="url(#pp-button)"/>
+  <circle cx="242" cy="242" r="6" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- Glassy highlight on the red half (washes over the engraving) -->
+  <path
+    d="M256 32 a224 224 0 0 1 222.88 196 H339.2 a84 84 0 0 0 -166.4 0 H33.12 A224 224 0 0 1 256 32 z"
+    fill="url(#pp-shine)"/>
+
+  <!-- Warm rim-light glint, painted last so it picks up the surface -->
+  <circle cx="256" cy="256" r="224" fill="url(#pp-rim-light)"/>
+
+  <!-- Outer rim soft shadow -->
+  <circle cx="256" cy="256" r="225" fill="url(#pp-rim)"/>
+</svg>
