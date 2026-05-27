@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -11,6 +11,20 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+
+import { useMarket } from "@/lib/perp";
+
+/**
+ * Cumulative funding chart — v0.9 live upgrade.
+ *
+ * Same WebSocket treatment as MarkVsIndexChart: historical points still come
+ * from the indexer JSONL (one-shot on mount), but live updates flow through
+ * useMarket() — which subscribes to the Market account via Solana's
+ * onAccountChange. 5s polling is gone; new points appear within one
+ * confirmation slot of any trade that ticks the funding accumulator (open /
+ * close / modify / liquidate / settle_funding all bump
+ * cumulative_funding_long).
+ */
 
 interface MarketSnapshot {
   ts: number;
@@ -34,14 +48,18 @@ interface ChartPoint {
  * the cap, accumulator = 24000 → 2.4%. Domain will auto-fit either side of 0.
  */
 const E4 = 10_000;
+const MAX_POINTS = 300;
 
 export default function FundingChart() {
-  const [data, setData] = useState<ChartPoint[]>([]);
+  const [historical, setHistorical] = useState<ChartPoint[]>([]);
+  const [live, setLive] = useState<ChartPoint[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  const market = useMarket();
+
+  // -------- Historical fetch (one-shot on mount) --------
   useEffect(() => {
     let cancelled = false;
-
     const load = async () => {
       try {
         const res = await fetch("/api/snapshots/market?limit=300");
@@ -52,21 +70,49 @@ export default function FundingChart() {
           label: new Date(s.ts).toLocaleTimeString(),
           cumulativePct: Number(BigInt(s.cumulativeFundingLong)) / E4,
         }));
-        setData(points);
+        setHistorical(points.slice(-MAX_POINTS));
         setLoaded(true);
       } catch (e) {
-        console.error("FundingChart load failed", e);
+        console.error("FundingChart historical load failed", e);
         setLoaded(true);
       }
     };
-
     load();
-    const i = setInterval(load, 5000);
     return () => {
       cancelled = true;
-      clearInterval(i);
     };
   }, []);
+
+  // -------- Live WebSocket updates --------
+  // useMarket() returns a new object reference per on-chain Market change, so
+  // this effect fires once per account update. We append the new cumulative
+  // funding value as a fresh point (capped at MAX_POINTS).
+  useEffect(() => {
+    if (market.status !== "ready") return;
+    const m = market.data;
+    const ts = Date.now();
+    const point: ChartPoint = {
+      t: ts,
+      label: new Date(ts).toLocaleTimeString(),
+      // cumulativeFundingLong is bigint from the decoded Market struct.
+      cumulativePct: Number(m.cumulativeFundingLong) / E4,
+    };
+    setLive((prev) => {
+      const next = [...prev, point];
+      return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
+    });
+  }, [market]);
+
+  // -------- Merge historical + live --------
+  const data = useMemo(() => {
+    if (live.length === 0) return historical;
+    if (historical.length === 0) return live;
+    const byTs = new Map<number, ChartPoint>();
+    for (const p of historical) byTs.set(p.t, p);
+    for (const p of live) byTs.set(p.t, p);
+    const merged = [...byTs.values()].sort((a, b) => a.t - b.t);
+    return merged.length > MAX_POINTS ? merged.slice(-MAX_POINTS) : merged;
+  }, [historical, live]);
 
   if (!loaded) {
     return (
@@ -86,7 +132,7 @@ export default function FundingChart() {
   const last = data[data.length - 1].cumulativePct;
   const maxAbs = data.reduce(
     (m, p) => Math.max(m, Math.abs(p.cumulativePct)),
-    0
+    0,
   );
 
   return (
