@@ -1,0 +1,29 @@
+# Railway build + deploy config for the Pokeperp indexer.
+#
+# Build: Railway's Nixpacks auto-detects Node from package.json (we declare
+# `tsx` + the npm `start` script). No custom build command needed — tsx runs
+# the TypeScript source directly at runtime.
+#
+# Persistence: the indexer writes JSONL files to ./data, which is ephemeral
+# by default on Railway. Configure a mounted persistent volume in the Railway
+# dashboard at /data and set DATA_DIR=/data so restarts don't wipe history.
+# (Same env: dashboard via Settings → Variables → DATA_DIR.)
+#
+# Required env vars (set in Railway dashboard → Variables):
+#   RPC_URL                  e.g. https://api.devnet.solana.com (HTTPS)
+#   RPC_WS                   e.g. wss://api.devnet.solana.com  (WSS)
+#   DATA_DIR                 /data (if a persistent volume is mounted there)
+# Optional:
+#   POSITION_POLL_MS         default 5000
+#
+# PORT is provided by Railway automatically; the indexer reads it.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30

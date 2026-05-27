@@ -3,17 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
-    "@solana/web3.js": "^1.95.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@solana/web3.js": "^1.95.0",
     "tsx": "^4.7.0",
     "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
   }
 }

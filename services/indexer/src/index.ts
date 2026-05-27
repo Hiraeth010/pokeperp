@@ -15,6 +15,7 @@
 import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as path from "node:path";
 import * as url from "node:url";
 
@@ -24,10 +25,13 @@ import type { Oracle } from "../../dashboard/lib/idl/oracle.ts";
 import type { PerpEngine } from "../../dashboard/lib/idl/perp_engine.ts";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, "..", "data");
+// Allow the data dir to be overridden so Railway can point it at a mounted
+// persistent volume.  Defaults to `services/indexer/data` for local dev.
+const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, "..", "data");
 const RPC_HTTP = process.env.RPC_URL ?? "http://127.0.0.1:8899";
 const RPC_WS = process.env.RPC_WS ?? "ws://127.0.0.1:8900";
 const POSITION_POLL_MS = Number(process.env.POSITION_POLL_MS ?? "5000");
+const HTTP_PORT = Number(process.env.PORT ?? "3001");
 
 const ORACLE_ID = new PublicKey(
   "GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i"
@@ -328,15 +332,94 @@ async function main(): Promise<void> {
   await pollPositions(); // initial sync
   setInterval(pollPositions, POSITION_POLL_MS);
 
+  // ===== HTTP server: serve JSONL snapshots over the network =====
+  // Required when the indexer + dashboard run on different machines (Railway +
+  // Vercel, in our case).  Three data endpoints + /health for Railway's probe.
+  // CORS is wide open: data is non-sensitive (public on-chain account state),
+  // no auth required, the dashboard reads from arbitrary Vercel preview hosts.
+  function jsonlTail(file: string, limit: number): unknown[] {
+    const fp = path.join(DATA_DIR, file);
+    if (!fs.existsSync(fp)) return [];
+    const lines = fs.readFileSync(fp, "utf-8").split("\n").filter(Boolean);
+    return lines.slice(-limit).map((l) => JSON.parse(l));
+  }
+
+  function send(res: http.ServerResponse, status: number, body: unknown): void {
+    res.writeHead(status, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Cache-Control": "no-store",
+    });
+    res.end(JSON.stringify(body));
+  }
+
+  const server = http.createServer((req, res) => {
+    // Preflight
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      res.end();
+      return;
+    }
+
+    const parsed = new URL(req.url ?? "/", `http://${req.headers.host ?? "x"}`);
+    const limit = Math.max(
+      1,
+      Math.min(2000, Number(parsed.searchParams.get("limit") ?? "300")),
+    );
+
+    try {
+      switch (parsed.pathname) {
+        case "/health":
+          send(res, 200, { ok: true, ts: Date.now() });
+          return;
+        case "/snapshots/market":
+          send(res, 200, jsonlTail("market.jsonl", limit));
+          return;
+        case "/snapshots/index":
+          send(res, 200, jsonlTail("index.jsonl", limit));
+          return;
+        case "/snapshots/closes":
+          send(res, 200, jsonlTail("closes.jsonl", limit));
+          return;
+        case "/snapshots/opens":
+          send(res, 200, jsonlTail("opens.jsonl", limit));
+          return;
+        case "/":
+          send(res, 200, {
+            service: "pokeperp-indexer",
+            endpoints: [
+              "/health",
+              "/snapshots/market",
+              "/snapshots/index",
+              "/snapshots/closes",
+              "/snapshots/opens",
+            ],
+          });
+          return;
+        default:
+          send(res, 404, { error: "not found" });
+      }
+    } catch (e) {
+      send(res, 500, { error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  server.listen(HTTP_PORT, () => {
+    console.log(`  HTTP server:  listening on :${HTTP_PORT}`);
+  });
+
   // Heartbeat
   console.log(`\nListening… (Ctrl+C to stop)`);
   process.on("SIGINT", () => {
     console.log("\nshutting down");
+    server.close();
     process.exit(0);
   });
-
-  // Keep the event loop alive forever
-  setInterval(() => {}, 1 << 30);
 }
 
 main().catch((e) => {
