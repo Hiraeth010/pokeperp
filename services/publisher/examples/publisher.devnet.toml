@@ -11,12 +11,13 @@
 #   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run
 
 [identity]
-# Pointing at publisher-3.  Pub-2's PriceUpdate for day 20599 hit transient
-# Oxylabs 613s on slots 1+4 (Rayquaza, Sylveon), forcing a stale fallback for
-# those two — pub-3 is a fresh PDA slot so we can submit a clean PriceUpdate
-# with real data for all 25 constituents.
-publisher_keypair_path = "./devnet-keys/publisher-3.json"
-publisher_pubkey = "G3LnXi6YWXXoAQr8CFm8gnvyjZJ6fpnmX66RK6sKzCrS"
+# Pointing at publisher-4.  Each previous publisher (admin, pub-2, pub-3)
+# has had its PriceUpdate PDA for day 20599 consumed.  Pub-4 is a fresh
+# slot for the post-curated-queries run, where we expect significantly
+# tighter prices because the search strings now use full card+set names
+# instead of "Pokemon ES 218/203 Alt Art PSA 10".
+publisher_keypair_path = "./devnet-keys/publisher-4.json"
+publisher_pubkey = "HLqpyCARa14gG2QsXPNNfQNZVNwzPTZqKZjPag1RStid"
 
 [oracle]
 rpc_url = "https://api.devnet.solana.com"

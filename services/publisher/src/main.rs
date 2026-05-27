@@ -478,13 +478,34 @@ struct ConstituentInfo {
 }
 
 impl ConstituentInfo {
-    /// Construct a default eBay query from registry fields. Publishers can override
-    /// this later via an explicit per-slot config table — but as long as the registry
-    /// `canonical_search_hash` is the SHA-256 of this same string, the on-chain hash
-    /// match works.
+    /// Construct the eBay search query for this constituent.
+    ///
+    /// First tries `curated_query()` — a hand-built table mapping each known
+    /// (set_code, collector_number, variant) to a query that sellers actually
+    /// use ("Pokemon Giratina V Lost Origin 186 Alt Art PSA 10") instead of
+    /// our internal abbreviations.  Falls back to a generic
+    /// "Pokemon {set_code} {n}/{set_total} {variant_word} PSA 10" if the slot
+    /// isn't in the curated table — that's noisy but doesn't crash.
+    ///
+    /// NB: changing this function detaches the search query from the
+    /// `canonical_search_hash` stored on-chain in the Constituent registry.
+    /// The on-chain hash is metadata only — it's not validated by
+    /// `submit_price_update`, so the divergence is cosmetic.  A future
+    /// registry update could re-hash these curated strings to bring them
+    /// back in sync, but it's not strictly required for correct operation.
     fn search_string(&self) -> String {
-        // "Pokemon {set_code} {n}/{set_total} {variant} PSA 10"
-        // Empty set_code or variant_code is OK; we still include the rest.
+        if let Some(curated) = curated_query(
+            &self.set_code,
+            self.collector_number,
+            &self.variant_code,
+        ) {
+            return curated;
+        }
+        self.generic_search_string()
+    }
+
+    /// Generic fallback when the curated table doesn't cover this slot.
+    fn generic_search_string(&self) -> String {
         let variant_word = match self.variant_code.to_ascii_uppercase().as_str() {
             "AA" => "Alt Art",
             "SIR" => "SIR",
@@ -510,6 +531,69 @@ impl ConstituentInfo {
         s.push_str(" PSA 10");
         s
     }
+}
+
+/// Hand-curated map from (registry set_code, collector_number, variant) to an
+/// eBay-friendly search query.  Mirrors the CARD_NAMES table in
+/// services/dashboard/lib/cards.ts; sources for these queries are
+/// docs/inception-candidates.md §2 (verified prices were obtained against
+/// listings matching these queries).
+///
+/// Format convention: "Pokemon <Card Name> <Set Name> <number> <variant words> PSA 10".
+/// We omit the "/<set_total>" suffix because most sellers don't include it,
+/// and including it filters out many otherwise-matching listings.  Methodology
+/// downstream rejects anything without "PSA 10" + matching variant keyword,
+/// so the over-broad search doesn't actually pull in noise.
+fn curated_query(set_code: &str, collector_number: u16, variant_code: &str) -> Option<String> {
+    let key = (set_code, collector_number, variant_code.to_ascii_uppercase());
+    let s = match (key.0, key.1, key.2.as_str()) {
+        // ----- Evolving Skies (swsh7) -----
+        ("ES", 215, "AA") => "Pokemon Umbreon VMAX Evolving Skies 215 Alt Art PSA 10",
+        ("ES", 218, "AA") => "Pokemon Rayquaza VMAX Evolving Skies 218 Alt Art PSA 10",
+        ("ES", 180, "AA") => "Pokemon Espeon V Evolving Skies 180 Alt Art PSA 10",
+        ("ES", 167, "AA") => "Pokemon Leafeon V Evolving Skies 167 Alt Art PSA 10",
+        ("ES", 184, "AA") => "Pokemon Sylveon V Evolving Skies 184 Alt Art PSA 10",
+        ("ES", 175, "AA") => "Pokemon Glaceon V Evolving Skies 175 Alt Art PSA 10",
+        // ----- Lost Origin (swsh11) -----
+        ("LO", 186, "AA") => "Pokemon Giratina V Lost Origin 186 Alt Art PSA 10",
+        ("LO", 3, "TG")   => "Pokemon Charizard Trainer Gallery Lost Origin TG03 PSA 10",
+        // ----- Silver Tempest (swsh12) -----
+        ("ST", 186, "AA") => "Pokemon Lugia V Silver Tempest 186 Alt Art PSA 10",
+        // ----- Brilliant Stars (swsh9) -----
+        ("BS", 154, "AA") => "Pokemon Charizard V Brilliant Stars 154 Alt Art PSA 10",
+        ("BS", 174, "RR") => "Pokemon Charizard VSTAR Brilliant Stars 174 Rainbow Rare PSA 10",
+        // ----- Champion's Path (swsh35) -----
+        ("CP", 74, "RR")  => "Pokemon Charizard VMAX Champion's Path 74 Rainbow Rare PSA 10",
+        // ----- Vivid Voltage (swsh4) -----
+        ("VV", 188, "RR") => "Pokemon Pikachu VMAX Vivid Voltage 188 Rainbow Rare PSA 10",
+        // ----- Fusion Strike (swsh8) -----
+        ("FS", 251, "AA") => "Pokemon Mew V Fusion Strike 251 Alt Art PSA 10",
+        ("FS", 269, "AA") => "Pokemon Mew VMAX Fusion Strike 269 Alt Art PSA 10",
+        ("FS", 271, "AA") => "Pokemon Gengar VMAX Fusion Strike 271 Alt Art PSA 10",
+        // ----- Unbroken Bonds (sm10) -----
+        ("UB", 217, "RR") => "Pokemon Reshiram Charizard GX Unbroken Bonds 217 Rainbow Rare PSA 10",
+        // ----- Unified Minds (sm11) -----
+        ("UM", 242, "RR") => "Pokemon Mewtwo Mew GX Unified Minds 242 Rainbow Rare PSA 10",
+        // ----- Pokemon 151 (sv3pt5) -----
+        ("PMK", 199, "SIR") => "Pokemon Charizard ex 151 199 Special Illustration Rare PSA 10",
+        ("PMK", 204, "SIR") => "Pokemon Giovanni's Charisma 151 204 Special Illustration Rare PSA 10",
+        // ----- Astral Radiance / Crown Zenith Galarian Gallery -----
+        // Registry has this slot as AR-188-AA but Astral Radiance #188 is
+        // actually Roxanne SAR — the real Hisuian Zoroark VSTAR alt art lives
+        // in Crown Zenith's Galarian Gallery subset as GG56.  Override the
+        // search to find the card we actually want.
+        ("AR", 188, "AA") => "Pokemon Hisuian Zoroark VSTAR Crown Zenith GG56 PSA 10",
+        // ----- Obsidian Flames (sv3) -----
+        ("OF", 215, "SIR") => "Pokemon Charizard ex Obsidian Flames 215 Special Illustration Rare PSA 10",
+        // ----- Paldean Fates (sv4pt5) -----
+        ("PaF", 233, "SIR") => "Pokemon Gardevoir ex Paldean Fates 233 Special Illustration Rare PSA 10",
+        // ----- Paldea Evolved (sv2) -----
+        ("PE", 269, "SAR") => "Pokemon Iono Paldea Evolved 269 Special Art Rare PSA 10",
+        // ----- Shining Fates Shiny Vault (swsh45sv) -----
+        ("SF", 107, "RR") => "Pokemon Charizard VMAX Shining Fates Shiny Vault SV107 PSA 10",
+        _ => return None,
+    };
+    Some(s.to_string())
 }
 
 /// v0.2 fallback: deterministically drift on-chain base prices by ±2%, day-keyed.
