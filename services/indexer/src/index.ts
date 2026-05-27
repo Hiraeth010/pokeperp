@@ -19,10 +19,17 @@ import * as http from "node:http";
 import * as path from "node:path";
 import * as url from "node:url";
 
-import OracleIdl from "../../dashboard/lib/idl/oracle.json" with { type: "json" };
-import PerpIdl from "../../dashboard/lib/idl/perp_engine.json" with { type: "json" };
-import type { Oracle } from "../../dashboard/lib/idl/oracle.ts";
-import type { PerpEngine } from "../../dashboard/lib/idl/perp_engine.ts";
+// IDL files are mirrored from services/dashboard/lib/idl/ into ./idl/.  We
+// can't import them from the dashboard's tree because the indexer ships to
+// Railway as its own container — only this directory's contents make it into
+// the build. After every `anchor build`, run:
+//   cp services/dashboard/lib/idl/{oracle,perp_engine}.{ts,json} \
+//      services/indexer/idl/
+// so the two stay in sync.
+import OracleIdl from "../idl/oracle.json" with { type: "json" };
+import PerpIdl from "../idl/perp_engine.json" with { type: "json" };
+import type { Oracle } from "../idl/oracle.ts";
+import type { PerpEngine } from "../idl/perp_engine.ts";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 // Allow the data dir to be overridden so Railway can point it at a mounted
