@@ -1,0 +1,21 @@
+# Railway config for the Pokeperp scraper (Oxylabs Web Scraper API edition).
+#
+# Build: Dockerfile-based (slim Node image; no Chromium needed).
+#
+# Required env vars (set in Railway dashboard → Variables):
+#   OXYLABS_USER       — Web Scraper API username (Oxylabs dashboard → Authorize)
+#   OXYLABS_PASS       — Web Scraper API password
+# Optional:
+#   OXYLABS_GEO        — defaults to "United States"
+#   PORT               — auto-injected by Railway
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30
