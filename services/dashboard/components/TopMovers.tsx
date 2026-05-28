@@ -90,7 +90,7 @@ function Body({
   }
   return (
     <>
-      <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+      <ul className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
         {rows.map((r) => (
           <MoverTile key={`${r.c.setCode}-${r.c.collectorNumber}`} row={r} />
         ))}
@@ -114,30 +114,28 @@ function MoverTile({ row }: { row: Row }) {
       <div className="relative mx-auto tcg-holo-strong overflow-hidden rounded-lg">
         <CardImage card={c} size="sm" />
       </div>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[12.5px] font-semibold leading-tight truncate">
-            {name ?? `${c.setCode} #${c.collectorNumber}`}
-          </p>
-          <p className="text-[10px] text-[rgb(var(--muted))] truncate mt-0.5">
-            {sub}
-          </p>
-        </div>
-        <div className="shrink-0 flex flex-col items-end gap-1">
-          {pct === null ? (
-            <span className="tabular text-[11px] text-[rgb(var(--muted))]">—</span>
-          ) : (
-            <span
-              className={`tabular text-[11.5px] font-semibold ${
-                positive ? "text-emerald-400" : "text-rose-400"
-              }`}
-            >
-              {formatPct(pct)}
-            </span>
-          )}
-          <TypeBadge tone={toneForVariant(c.variantCode)}>
-            {c.variantCode}
-          </TypeBadge>
+      <div className="min-w-0">
+        <p className="text-[12.5px] font-semibold leading-tight truncate">
+          {name ?? `${c.setCode} #${c.collectorNumber}`}
+        </p>
+        <div className="flex items-center justify-between gap-2 mt-1">
+          <p className="text-[10px] text-[rgb(var(--muted))] truncate">{sub}</p>
+          <div className="shrink-0 flex items-center gap-1.5">
+            {pct === null ? (
+              <span className="tabular text-[11px] text-[rgb(var(--muted))]">—</span>
+            ) : (
+              <span
+                className={`tabular text-[11.5px] font-semibold ${
+                  positive ? "text-emerald-400" : "text-rose-400"
+                }`}
+              >
+                {formatPct(pct)}
+              </span>
+            )}
+            <TypeBadge tone={toneForVariant(c.variantCode)}>
+              {c.variantCode}
+            </TypeBadge>
+          </div>
         </div>
       </div>
     </li>

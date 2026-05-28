@@ -1,7 +1,7 @@
 "use client";
 
 import { useIndexState, useConstituentRegistry } from "@/lib/oracle";
-import { formatIndex } from "@/lib/format";
+import { formatIndex, formatAgo } from "@/lib/format";
 import CardImage from "./CardImage";
 
 export default function IndexCard() {
@@ -45,7 +45,7 @@ export default function IndexCard() {
     "Pre-launch": "rgb(var(--muted))",
   };
   const updatedAgo = finalizedAt
-    ? `${Math.max(0, Math.floor((Date.now() / 1000 - finalizedAt) / 60))}m ago`
+    ? formatAgo(Date.now() / 1000 - finalizedAt)
     : "—";
 
   return (
@@ -81,13 +81,12 @@ export default function IndexCard() {
         <span className="text-[rgb(var(--muted))] text-sm tabular pl-1">USDC</span>
       </div>
 
-      <div className="mt-7 pt-5 border-t border-[rgb(var(--border-subtle))]/40 flex items-center justify-between text-xs relative z-[1]">
+      <div className="mt-7 pt-5 border-t border-[rgb(var(--border-subtle))]/40 text-xs relative z-[1]">
         <span className="text-[rgb(var(--muted))]">
           {indexValue !== null
             ? `Last update ${updatedAgo} · ${status.toLowerCase()}`
             : "Oracle not yet aggregating on this cluster"}
         </span>
-        <span className="label-caps text-[rgb(var(--muted))]">24h</span>
       </div>
 
       {previewConstituents.length > 0 && (

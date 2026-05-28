@@ -46,6 +46,23 @@ export function pctChange(current: bigint, base: bigint): number {
   return ((cur - ba) / ba) * 100;
 }
 
+/** Human "time ago" from a duration in seconds, rolling minutes→hours→days:
+ *  40 → "just now", 184min → "3h 4m ago", 1500min → "1d 1h ago". */
+export function formatAgo(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) {
+    const rem = m % 60;
+    return rem > 0 ? `${h}h ${rem}m ago` : `${h}h ago`;
+  }
+  const d = Math.floor(h / 24);
+  const remH = h % 24;
+  return remH > 0 ? `${d}d ${remH}h ago` : `${d}d ago`;
+}
+
 /** Decode a fixed-size byte array into trimmed UTF-8 string (drops trailing zeros). */
 export function bytesToString(bytes: number[] | Uint8Array): string {
   const arr = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);

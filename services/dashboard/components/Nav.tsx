@@ -2,23 +2,35 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { BaseWalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 import PokeperpLogo from "./PokeperpLogo";
 import XIcon from "./XIcon";
 
+// Same as the default WalletMultiButton labels, but the disconnected state reads
+// "Connect" instead of "Select Wallet" (shorter + clearer, esp. on mobile).
+const WALLET_LABELS = {
+  "change-wallet": "Change wallet",
+  connecting: "Connecting …",
+  "copy-address": "Copy address",
+  copied: "Copied",
+  disconnect: "Disconnect",
+  "has-wallet": "Connect",
+  "no-wallet": "Connect",
+} as const;
+
 export default function Nav() {
   return (
     <header className="border-b border-[rgb(var(--border-subtle))]/60 backdrop-blur-md sticky top-0 z-10 bg-[rgb(var(--background))]/85">
-      <nav className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
+      <nav className="max-w-6xl mx-auto px-3 sm:px-4 py-3.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-2.5">
         <Link
           href="/"
-          className="group transition-opacity hover:opacity-90"
+          className="group transition-opacity hover:opacity-90 shrink-0"
           aria-label="Pokeperp home"
         >
           <PokeperpLogo size="md" />
         </Link>
-        <div className="flex items-center gap-1 text-sm">
+        <div className="flex items-center gap-0.5 sm:gap-1 text-sm">
           <NavLink href="/">Index</NavLink>
           <NavLink href="/trade">Trade</NavLink>
           <NavLink href="/portfolio">Portfolio</NavLink>
@@ -28,12 +40,12 @@ export default function Nav() {
             rel="noopener noreferrer"
             aria-label="Follow @PokePerp on X"
             title="Follow @PokePerp on X"
-            className="ml-1 p-2 rounded-md text-[rgb(var(--muted))] hover:text-white hover:bg-[rgb(var(--background-elevated))] transition-colors"
+            className="hidden sm:inline-flex ml-1 p-2 rounded-md text-[rgb(var(--muted))] hover:text-white hover:bg-[rgb(var(--background-elevated))] transition-colors"
           >
             <XIcon size={14} />
           </a>
-          <div className="ml-2">
-            <WalletMultiButton />
+          <div className="ml-1 sm:ml-2">
+            <BaseWalletMultiButton labels={WALLET_LABELS} />
           </div>
         </div>
       </nav>
@@ -53,7 +65,7 @@ function NavLink({
   return (
     <Link
       href={href}
-      className={`relative px-3 py-1.5 rounded-md transition-colors ${
+      className={`relative px-2 sm:px-3 py-1.5 rounded-md transition-colors ${
         active
           ? "text-white"
           : "text-[rgb(var(--muted))] hover:text-white hover:bg-[rgb(var(--background-elevated))]"
@@ -62,7 +74,7 @@ function NavLink({
       {children}
       {active && (
         <span
-          className="absolute left-3 right-3 -bottom-[14px] h-[2px] rounded-full"
+          className="absolute left-2 right-2 sm:left-3 sm:right-3 -bottom-[14px] h-[2px] rounded-full"
           style={{
             background:
               "linear-gradient(90deg, rgb(var(--electric-from)), rgb(var(--electric-to)))",

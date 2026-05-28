@@ -274,7 +274,17 @@ body {
   font-size: 13px !important;
   height: 36px !important;
   padding: 0 14px !important;
+  white-space: nowrap !important;
   transition: all 0.12s ease !important;
+}
+
+/* Tighten the wallet button on small screens so the nav fits more easily. */
+@media (max-width: 640px) {
+  .wallet-adapter-button {
+    font-size: 12px !important;
+    height: 34px !important;
+    padding: 0 12px !important;
+  }
 }
 
 .wallet-adapter-button:hover:not([disabled]) {
