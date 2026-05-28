@@ -1,0 +1,22 @@
+# Railway config for the Pokeperp monitor — a worker that watches protocol
+# health and alerts via Telegram. Not an HTTP service (no healthcheck).
+#
+# Required env vars (Railway → Variables):
+#   RPC_URL              Helius (or any) devnet RPC, HTTPS
+#   TELEGRAM_BOT_TOKEN   from @BotFather
+#   TELEGRAM_CHAT_ID     chat to send alerts to
+# Optional:
+#   POLL_INTERVAL_MS         default 120000 (2 min)
+#   ORACLE_STALE_HOURS       default 26
+#   FUNDING_STALE_HOURS      default 3
+#   KEEPER_PUBKEY            default the devnet keeper key
+#   KEEPER_MIN_SOL           default 0.05
+#   INDEXER_HEALTH_URL       default the Railway indexer /health
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
