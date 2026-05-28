@@ -34,8 +34,9 @@ export default function RootLayout({
       <body className="font-sans">
         <WalletProvider>
           {/* Devnet warning — sits above the nav so it's the first thing visitors
-              see. Remove this when we point at mainnet. */}
-          <DevnetBanner />
+              see. Hidden once NEXT_PUBLIC_NETWORK=mainnet (set in Vercel at the
+              mainnet cutover); defaults to showing on devnet. */}
+          {process.env.NEXT_PUBLIC_NETWORK !== "mainnet" && <DevnetBanner />}
           <Nav />
           <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
           <footer className="max-w-6xl mx-auto px-4 py-10 mt-12 text-center text-[10px] text-[rgb(var(--muted))]">

@@ -105,3 +105,45 @@ solana program deploy --url mainnet-beta \
       in the dashboard docs.
 - [ ] Monitor green across all checks; keeper funded; insurance at target.
 - [ ] Announce.
+
+---
+
+## ACTUAL MAINNET STATE (as deployed)
+
+Programs and the full on-chain skeleton are LIVE on mainnet-beta; the market is
+PAUSED (`trading_paused = true`) with an empty insurance fund. Single-operator
+oracle. Real Circle USDC (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`).
+
+| Thing | Address |
+|---|---|
+| oracle program | `GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i` |
+| perp program | `Gtpv6K9Fi3pkYcYZEzqaS8DW2nqDwpwPf24Q1WxsQzsa` |
+| Config | `CaueezXmytm6ymDC7AGJ3nXUfrwoMiirVvAMuNrhRW6k` |
+| Registry | `7dQTC5J3P5Tj1hMLFt21qjRNW5UZH5DbVLsUT5wcthSU` |
+| IndexState | `6mxWms4Mv2EZDebJaRJywccnRyXcBPqf7s5gSNPa1ME5` |
+| insurance vault | `j5iEeCPzzbCkgkGHYzDj3brKM6b8jBXGDEELseXt5q8` |
+| treasury vault | `3ZKwmKQqAJbvvaD7EBvgHhaN5RfHWoSSB9b2uEV9BQew` |
+| deploy/admin wallet (current admin + upgrade auth) | `6kDZoNSKfjXwYPLiSnBWNWwNkZCkJ2d4yLYu49BrHYGR` |
+| Squad multisig / vault (future admin) | `G88e9ifWs1mmP5XWxxAChVG1qj5CnXppEYsrYuqm2Fmb` / `B5JuVLs4D7ZPoDhW1tUyMeQEyp2KgofsA6HFwTWnqgZC` |
+| publisher (registered, 100 USDC bond) | `FRmRRxc46eL2bHg3WJfNCaPWXKgZRkn9iJGbPDGxEStx` |
+| keeper | `6ogw5yJz5fQCcAHaCGaro2iqd7iqEdVcf4uuCKmzTKuA` |
+
+Done: programs deployed, state initialized, publisher registered, crank LIVE on
+mainnet (Railway `publisher-crank`), scraper hardened (no-render + retries),
+Squad created. Keys in `mainnet-keys/` (gitignored). RPC in `mainnet-keys/rpc.url`.
+
+## Parcel B — go-live command sequence (run when the 10k insurance USDC lands)
+
+Pre-req gate: confirm at least one daily crank cycle landed **25/25 real scraped
+prices** (`scripts/status-mainnet.ts`) before enabling trading.
+
+1. **Fund:** send 10,000 USDC → `6kDZ…` (admin wallet); send ~1 SOL → keeper `6ogw5…`.
+2. **Seed insurance:** `RPC_URL=<mainnet> AMOUNT_USDC=10000 npx tsx scripts/deposit-insurance-mainnet.ts`
+3. **Keeper → mainnet (Railway `keeper`):** set `RPC_URL`=mainnet + `KEEPER_KEYPAIR_JSON`=`mainnet-keys/keeper.json`; `railway up --service keeper`.
+4. **Indexer → mainnet (Railway `pokeperp-indexer`):** set `RPC_URL`=mainnet; `railway up`.
+5. **Monitor → mainnet** (AFTER 2–3 so checks are green): set `RPC_URL`=mainnet + `KEEPER_PUBKEY`=`6ogw5…`; `railway up --service monitor`. Confirm Telegram alerts fire.
+6. **Dashboard cutover (Vercel `pokeperp`)** — env flips only, no code change: `RPC_URL`=mainnet Helius (proxy upstream), `NEXT_PUBLIC_RPC_WS`=mainnet WS, `NEXT_PUBLIC_NETWORK`=`mainnet` (hides the devnet banner), `INDEXER_URL`=mainnet indexer. Redeploy (push or `vercel redeploy`).
+7. **Enable trading:** `RPC_URL=<mainnet> PAUSE=false npx tsx scripts/set-pause-mainnet.ts`. Verify a small test open/close.
+8. **Lock down admin → Squad:** `RPC_URL=<mainnet> npx tsx scripts/squads/migrate-admin-mainnet.ts` (Config.admin + Market.admin → vault `B5Ju…`). After this, set_pause etc. go through the 2-of-3.
+9. **(Post-validation) move upgrade authority to the Squad:** `solana program set-upgrade-authority <id> --new-upgrade-authority B5Ju… --upgrade-authority mainnet-keys/deploy.json` for both programs. Deferred from launch so patches stay easy while unaudited.
+10. Monitor green across all checks → announce.
