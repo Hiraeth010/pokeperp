@@ -33,10 +33,9 @@ export default function RootLayout({
     <html lang="en" className={`${body.variable} ${display.variable}`}>
       <body className="font-sans">
         <WalletProvider>
-          {/* Devnet warning — sits above the nav so it's the first thing visitors
-              see. Hidden once NEXT_PUBLIC_NETWORK=mainnet (set in Vercel at the
-              mainnet cutover); defaults to showing on devnet. */}
-          {process.env.NEXT_PUBLIC_NETWORK !== "mainnet" && <DevnetBanner />}
+          {/* Network status strip — picks devnet-warning / mainnet-live-soon /
+              none based on NEXT_PUBLIC_NETWORK + NEXT_PUBLIC_TRADING_LIVE. */}
+          <DevnetBanner />
           <Nav />
           <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
           <footer className="max-w-6xl mx-auto px-4 py-10 mt-12 text-center text-[10px] text-[rgb(var(--muted))]">
