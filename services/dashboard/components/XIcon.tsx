@@ -1,6 +1,6 @@
 /**
  * X (Twitter) glyph as inline SVG.  Used as a small link icon in the nav to
- * @PokePerp.  Inlining avoids a font-icon dependency and lets the color follow
+ * @PokePerpDex.  Inlining avoids a font-icon dependency and lets the color follow
  * `currentColor` so it picks up the nav's text color + hover state for free.
  */
 export default function XIcon({
