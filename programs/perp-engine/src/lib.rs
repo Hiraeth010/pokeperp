@@ -2389,3 +2389,84 @@ mod funding_tests {
         assert_eq!(big, small * 100);
     }
 }
+
+#[cfg(test)]
+mod mark_tests {
+    use super::*;
+
+    // $1000 index, Phase-1 slippage factor (×1e6).
+    const INDEX: u64 = 1_000_000_000;
+    const SLIP: u32 = 100_000; // 0.10 → full imbalance moves mark ±10%
+
+    #[test]
+    fn balanced_oi_marks_at_index() {
+        // long == short → zero imbalance → mark == index.
+        let mark = compute_mark_price(INDEX, 500_000_000, 500_000_000, 1, SLIP).unwrap();
+        assert_eq!(mark, INDEX);
+    }
+
+    #[test]
+    fn full_long_imbalance_pushes_mark_up_10pct() {
+        // all-long, OI above floor → imbalance = +1.0 → +slippage (10%).
+        let mark = compute_mark_price(INDEX, 500_000_000, 0, 1, SLIP).unwrap();
+        assert_eq!(mark, 1_100_000_000);
+    }
+
+    #[test]
+    fn full_short_imbalance_pushes_mark_down_10pct() {
+        let mark = compute_mark_price(INDEX, 0, 500_000_000, 1, SLIP).unwrap();
+        assert_eq!(mark, 900_000_000);
+    }
+
+    #[test]
+    fn long_and_short_are_symmetric() {
+        let up = compute_mark_price(INDEX, 300_000_000, 0, 1, SLIP).unwrap();
+        let down = compute_mark_price(INDEX, 0, 300_000_000, 1, SLIP).unwrap();
+        assert_eq!(up - INDEX, INDEX - down);
+    }
+
+    #[test]
+    fn oi_floor_dampens_thin_market_imbalance() {
+        // $100 long against a $500 floor → imbalance dampened to 0.2 → +2% (not +10%).
+        let mark = compute_mark_price(INDEX, 100_000_000, 0, 500_000_000, SLIP).unwrap();
+        assert_eq!(mark, 1_020_000_000);
+    }
+
+    #[test]
+    fn zero_oi_and_zero_floor_returns_index() {
+        assert_eq!(compute_mark_price(INDEX, 0, 0, 0, SLIP).unwrap(), INDEX);
+    }
+
+    #[test]
+    fn zero_oi_with_floor_returns_index() {
+        assert_eq!(compute_mark_price(INDEX, 0, 0, 500_000_000, SLIP).unwrap(), INDEX);
+    }
+
+    #[test]
+    fn ema_first_observation_sets_value() {
+        assert_eq!(ema_update(0, 1234, 4).unwrap(), 1234);
+        assert_eq!(ema_update(0, 1234, 16).unwrap(), 1234);
+    }
+
+    #[test]
+    fn ema_steady_state_holds() {
+        assert_eq!(ema_update(1000, 1000, 16).unwrap(), 1000);
+        assert_eq!(ema_update(1000, 1000, 4).unwrap(), 1000);
+    }
+
+    #[test]
+    fn ema_weighted_average() {
+        // denom 4: (2000 + 3×1000)/4 = 1250.
+        assert_eq!(ema_update(1000, 2000, 4).unwrap(), 1250);
+    }
+
+    #[test]
+    fn ema_5min_reacts_faster_than_1h() {
+        // Same +100 jump: the 5-min EMA (denom 4) moves more than the 1h (denom 16).
+        let fast = ema_update(1000, 1100, 4).unwrap(); // 1025
+        let slow = ema_update(1000, 1100, 16).unwrap(); // 1006
+        assert!(fast > slow);
+        assert_eq!(fast, 1025);
+        assert_eq!(slow, 1006);
+    }
+}

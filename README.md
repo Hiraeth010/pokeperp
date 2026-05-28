@@ -12,7 +12,7 @@ A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pok
 
 ## Status
 
-Working v0.9 end-to-end on localnet, and **deployed live on Solana devnet** with a self-updating index. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow. **108 tests passing across the workspace** (21 oracle integration + 24 perp-engine integration + 6 oracle v0.9 unit + 5 funding-math unit + 52 publisher unit; 1 perp-engine test self-skips when the liquidation-test EMA hasn't converged).
+Working v0.9 end-to-end on localnet, and **deployed live on Solana devnet** with a self-updating index. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow. **119 tests passing across the workspace** (21 oracle integration + 24 perp-engine integration + 6 oracle v0.9 unit + 5 funding-math unit + 11 mark-price/EMA unit + 52 publisher unit; 1 perp-engine test self-skips when the liquidation-test EMA hasn't converged).
 
 **Live on devnet**
 
