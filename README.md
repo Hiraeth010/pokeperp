@@ -12,7 +12,7 @@ A Solana perpetual futures DEX settling against the **PSA 10 Modern Top 25** Pok
 
 ## Status
 
-Working v0.9 end-to-end on localnet, and **deployed live on Solana devnet** with a self-updating index. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow. **119 tests passing across the workspace** (21 oracle integration + 24 perp-engine integration + 6 oracle v0.9 unit + 5 funding-math unit + 11 mark-price/EMA unit + 52 publisher unit; 1 perp-engine test self-skips when the liquidation-test EMA hasn't converged).
+Working v0.9 end-to-end on localnet, and **deployed live on Solana devnet** with a self-updating index. Both on-chain programs are implemented and verified; off-chain services run; the dashboard renders live on-chain state and the test wallet can open / modify / close positions through a real Anchor flow. **120 tests passing across the workspace** (22 oracle integration + 24 perp-engine integration + 6 oracle v0.9 unit + 5 funding-math unit + 11 mark-price/EMA unit + 52 publisher unit; 1 perp-engine test self-skips when the liquidation-test EMA hasn't converged).
 
 **Live on devnet**
 
@@ -49,7 +49,7 @@ Trading is **already enabled on-chain** — the market runs full Phase-1 risk pa
 **v0.9 known gaps** (documented in code)
 
 - The admin-transfer ix lets you point Market.admin / Config.admin at a Squads vault PDA, but **the actual Squad creation is an operational task** (Squads V4 UI / CLI) — not in this repo. A `docs/mainnet-runbook.md` describing the Squad setup, signer composition, and threshold choice is a follow-up.
-- Multi-publisher integration test for the actual challenge-slash path is a **v0.10 follow-up**: requires a second registered publisher submitting deviant prices + a re-aggregation pass to give a non-zero on-chain deviation. The slash math + tier mapping itself is fully covered by the Rust unit tests in `v09_tests`.
+- ~~Multi-publisher integration test for the actual challenge-slash path~~ **closed**: `tests/oracle.ts` now has "slashes a deviant publisher on a successful multi-publisher challenge" — 3 publishers, one deviant, median aggregate, permissionless resolve → 100% slash + Removed + 50/50 bond redistribution. (Slash-tier mapping also unit-tested in `v09_tests`.)
 - Positive-path liveness-slash integration test requires advancing the on-chain clock past the day-threshold boundaries, which the test-validator harness doesn't support cleanly. The TS suite covers the negative paths (Shadow not eligible, no new tier when not absent); the slash math is unit-tested in Rust.
 - `max_positions_per_side` is capped at 25 to keep the ADL witness list inside a single 1232-byte Solana transaction. Raising this for Phase 2+ scale requires address lookup tables (ALTs) or a versioned-transaction migration.
 - Publisher: the eBay Browse sold-items *API* still needs Marketplace Insights partner approval — the live devnet crank sources real eBay-derived prices via the Oxylabs scraper (`services/scraper`) in the meantime. Card-Codex aggregate fallback wired in v0.4 with a 23-of-25 inception-card URL mapping (Shining Fates Shiny Vault uses SV-prefixed numbers that don't fit Card-Codex's collector-number URL convention — deferred).

@@ -669,9 +669,8 @@ describe("oracle", () => {
     //
     // Slash-tier coverage (≥2%, ≥5%, ≥10%) is exhaustively unit-tested in Rust
     // via v09_tests::deviation_to_slash_tier in programs/oracle/src/lib.rs.
-    // A full multi-publisher integration test for the actual slash path is a
-    // v0.10 follow-up — it needs a second registered publisher submitting
-    // deviant prices + a re-aggregation pass to give a non-zero deviation.
+    // The full multi-publisher slash path is covered by the
+    // "slashes a deviant publisher..." integration test at the end of this file.
     const targetDay = submissionDayForChallenge;
     const targetConstituent = 0;
     const dayBuf = Buffer.alloc(4);
@@ -1075,5 +1074,250 @@ describe("oracle", () => {
     expect(cfg.admin.toBase58()).to.equal(
       provider.wallet.publicKey.toBase58()
     );
+  });
+
+  it("slashes a deviant publisher on a successful multi-publisher challenge (v0.10)", async () => {
+    // The real slash path (the v0.10 gap noted in the dismiss test): with 3
+    // submitting publishers the aggregate is a real median. publisherKp already
+    // submitted honest prices for T-1 (constituent 0 = 1_000_000_000). We add
+    // pubB (honest) and pubC (deviant: constituent 0 = 1_500_000_000). Median of
+    // {1000, 1000, 1500} = 1000, so pubC deviates 5000 bps → ≥10% tier → 100%
+    // slash + Removed. aggregate_day re-stamps IndexState to Provisional with a
+    // fresh challenge window, so this works even after the earlier finalize.
+    const day = submissionDayForChallenge; // T-1
+    const dayBuf = Buffer.alloc(4);
+    dayBuf.writeUInt32LE(day, 0);
+    const constituent = 0;
+
+    const honest = Array.from(
+      { length: 25 },
+      (_, i) => new anchor.BN(1_000_000_000 + i * 10_000_000)
+    );
+    const deviant = honest.slice();
+    deviant[constituent] = new anchor.BN(1_500_000_000); // +50% on constituent 0
+    const saleCounts = Array.from({ length: 25 }, () => 100);
+    const sourceRoot = Array.from({ length: 32 }, () => 0);
+
+    const pubB = Keypair.generate();
+    const pubC = Keypair.generate();
+
+    // Register + fund pubB, pubC (admin pays the 10k bond each); submit prices.
+    for (const { kp, prices } of [
+      { kp: pubB, prices: honest },
+      { kp: pubC, prices: deviant },
+    ]) {
+      await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          anchor.web3.SystemProgram.transfer({
+            fromPubkey: provider.wallet.publicKey,
+            toPubkey: kp.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        ),
+        []
+      );
+      const [pPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("publisher"), kp.publicKey.toBuffer()],
+        program.programId
+      );
+      const [bv] = PublicKey.findProgramAddressSync(
+        [Buffer.from("bond_vault"), kp.publicKey.toBuffer()],
+        program.programId
+      );
+      await program.methods
+        .registerPublisher(kp.publicKey)
+        .accounts({
+          config: configPda,
+          admin: provider.wallet.publicKey,
+          publisherAccount: pPda,
+          adminUsdcAccount: adminUsdcAta,
+          bondVault: bv,
+          usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      const [pu] = PublicKey.findProgramAddressSync(
+        [Buffer.from("price"), kp.publicKey.toBuffer(), dayBuf],
+        program.programId
+      );
+      await program.methods
+        .submitPriceUpdate(day, prices, saleCounts, sourceRoot)
+        .accounts({
+          config: configPda,
+          publisher: kp.publicKey,
+          publisherAccount: pPda,
+          priceUpdate: pu,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([kp])
+        .rpc();
+    }
+
+    // Re-aggregate T-1 with all three submissions → real median, fresh window.
+    const [registryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("registry")],
+      program.programId
+    );
+    const [indexStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("index_state")],
+      program.programId
+    );
+    const puPdas = [publisherKp, pubB, pubC].map(
+      (kp) =>
+        PublicKey.findProgramAddressSync(
+          [Buffer.from("price"), kp.publicKey.toBuffer(), dayBuf],
+          program.programId
+        )[0]
+    );
+    await program.methods
+      .aggregateDay(day)
+      .accounts({
+        config: configPda,
+        registry: registryPda,
+        indexState: indexStatePda,
+        caller: provider.wallet.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts(
+        puPdas.map((p) => ({ pubkey: p, isWritable: false, isSigner: false }))
+      )
+      .rpc();
+
+    const idx = await program.account.indexState.fetch(indexStatePda);
+    expect(idx.aggregatedPrices[constituent].toString()).to.equal("1000000000");
+    expect(idx.constituentStatus[constituent]).to.equal(0); // 3 valid → not stale
+
+    // Open a challenge against pubC for constituent 0 (fresh challenger → fresh PDA).
+    const challengerC = Keypair.generate();
+    await provider.sendAndConfirm(
+      new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: provider.wallet.publicKey,
+          toPubkey: challengerC.publicKey,
+          lamports: LAMPORTS_PER_SOL,
+        })
+      ),
+      []
+    );
+    const challengerCAta = await createAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      usdcMint,
+      challengerC.publicKey
+    );
+    await mintTo(
+      provider.connection,
+      payer,
+      usdcMint,
+      challengerCAta,
+      mintAuthority,
+      Number(challengeBond * BigInt(2))
+    );
+
+    const [challengePda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge"),
+        challengerC.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([constituent]),
+      ],
+      program.programId
+    );
+    const [challengeBondVaultPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("challenge_bond_vault"),
+        challengerC.publicKey.toBuffer(),
+        dayBuf,
+        Buffer.from([constituent]),
+      ],
+      program.programId
+    );
+
+    await program.methods
+      .openChallenge(
+        day,
+        pubC.publicKey,
+        constituent,
+        new anchor.BN(1_000_000_000),
+        "ipfs://bafy-deviant-evidence"
+      )
+      .accounts({
+        config: configPda,
+        challenger: challengerC.publicKey,
+        indexState: indexStatePda,
+        challenge: challengePda,
+        challengerUsdcAccount: challengerCAta,
+        challengeBondVault: challengeBondVaultPda,
+        usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([challengerC])
+      .rpc();
+
+    // Resolve permissionlessly → deviation 5000 bps → 100% slash + Removed.
+    const [pubCPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("publisher"), pubC.publicKey.toBuffer()],
+      program.programId
+    );
+    const [pubCBondVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("bond_vault"), pubC.publicKey.toBuffer()],
+      program.programId
+    );
+    const [pubCPu] = PublicKey.findProgramAddressSync(
+      [Buffer.from("price"), pubC.publicKey.toBuffer(), dayBuf],
+      program.programId
+    );
+
+    const challengerBefore = (
+      await getAccount(provider.connection, challengerCAta)
+    ).amount;
+    const treasuryBefore = (await getAccount(provider.connection, treasuryVault))
+      .amount;
+
+    await program.methods
+      .resolveChallenge()
+      .accounts({
+        config: configPda,
+        caller: provider.wallet.publicKey,
+        challenge: challengePda,
+        indexState: indexStatePda,
+        targetPriceUpdate: pubCPu,
+        challengeBondVault: challengeBondVaultPda,
+        targetPublisherAccount: pubCPda,
+        targetPublisherBondVault: pubCBondVault,
+        challengerUsdcAccount: challengerCAta,
+        treasuryVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    // Challenge succeeded with the full 100% tier.
+    const c = await program.account.challenge.fetch(challengePda);
+    expect(c.status).to.deep.equal({ succeeded: {} });
+    expect(c.slashBps).to.equal(10000);
+    expect(c.slashedAmount.toString()).to.equal("10000000000"); // full 10k bond
+    // challenger_payout = 50% slash share (5k) + refunded challenge bond (1k).
+    expect(c.challengerPayout.toString()).to.equal("6000000000");
+
+    // Deviant publisher fully slashed + removed.
+    const pubCAcct = await program.account.publisher.fetch(pubCPda);
+    expect(pubCAcct.bondAmount.toString()).to.equal("0");
+    expect(pubCAcct.status).to.deep.equal({ removed: {} });
+    expect(pubCAcct.successfulChallengesAgainst).to.equal(1);
+
+    // Challenger: +5k slash share + 1k bond refund = +6k.
+    const challengerAfter = (
+      await getAccount(provider.connection, challengerCAta)
+    ).amount;
+    expect((challengerAfter - challengerBefore).toString()).to.equal(
+      "6000000000"
+    );
+
+    // Treasury: +5k (the other half of the slashed bond).
+    const treasuryAfter = (await getAccount(provider.connection, treasuryVault))
+      .amount;
+    expect((treasuryAfter - treasuryBefore).toString()).to.equal("5000000000");
   });
 });
