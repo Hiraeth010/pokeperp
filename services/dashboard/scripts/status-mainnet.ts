@@ -37,6 +37,19 @@ async function main(): Promise<void> {
   console.log("  phase:           ", mkt.phase);
   console.log("  long_oi/short_oi:", usd(mkt.longOi ?? 0), "/", usd(mkt.shortOi ?? 0));
 
+  try {
+    const idx = await oracle.account.indexState.fetch(pda("index_state", oracle.programId));
+    const cs = idx.constituentStatus as number[];
+    const fresh = cs.filter((s) => s === 0).length;
+    console.log("\n=== Oracle IndexState ===");
+    console.log("  day:             ", idx.day);
+    console.log("  status:          ", Object.keys(idx.status as object)[0]);
+    console.log("  index_value:     ", "$" + (Number(idx.indexValue.toString()) / 1e6).toLocaleString());
+    console.log("  constituents:    ", `${fresh}/25 fresh, ${25 - fresh} stale/fallback`);
+  } catch {
+    console.log("\n=== Oracle IndexState ===\n  (not created yet)");
+  }
+
   const insVault = pda("insurance_vault", perp.programId);
   const treVault = pda("treasury_vault", perp.programId);
   const bal = async (p: PublicKey) => {
