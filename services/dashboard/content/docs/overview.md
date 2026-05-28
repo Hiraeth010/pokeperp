@@ -26,8 +26,10 @@ leverageable instrument that settles on-chain.
 
 ## Status
 
-> Pokeperp is currently running on **Solana devnet** with test USDC. Programs and
-> the USDC mint are test versions — don't use real funds. Mainnet launch will be
-> announced on [X / @PokePerp](https://x.com/PokePerp).
+> Pokeperp is **live on Solana mainnet** and settles against real USDC. The PMT25
+> index is live on-chain and updates daily. **Trading isn't open yet** — it opens
+> once the insurance fund is seeded; we'll announce on [X / @PokePerp](https://x.com/PokePerp).
+> The official **$POKE** contract address is `pokeHAfu5hjQbKaHfQJns3BUVRYMLvPfKJHKx9sBBtX`
+> — only trust the CA shown on the Pokeperp home page.
 
 Not affiliated with Nintendo, The Pokémon Company, or PSA.
