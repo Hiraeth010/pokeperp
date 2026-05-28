@@ -28,7 +28,7 @@ leverageable instrument that settles on-chain.
 
 > Pokeperp is **live on Solana mainnet** and settles against real USDC. The PMT25
 > index is live on-chain and updates daily. **Trading isn't open yet** — it opens
-> once the insurance fund is seeded; we'll announce on [X / @PokePerp](https://x.com/PokePerp).
+> once the insurance fund is seeded; we'll announce on [X / @PokePerpDex](https://x.com/PokePerpDex).
 > The official **$POKE** contract address will be posted here at launch — only trust
 > the CA shown on the Pokeperp home page.
 
