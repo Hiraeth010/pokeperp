@@ -1,0 +1,13 @@
+{
+  "cluster": "mainnet-beta",
+  "multisigPda": "G88e9ifWs1mmP5XWxxAChVG1qj5CnXppEYsrYuqm2Fmb",
+  "vaultPda": "B5JuVLs4D7ZPoDhW1tUyMeQEyp2KgofsA6HFwTWnqgZC",
+  "threshold": 2,
+  "members": [
+    "SatNtcfcd73M2ryinwsQGNwkkUXaUXfrbeNv34UFasB",
+    "Dohg75gRvMcPNrR8kG7dcmBoaxUtqczMT4FzqqzKUqng",
+    "EQjaMwTYcbkzFBnNP5crqNrcBY98AqmJ85AnYtyTGP1e"
+  ],
+  "createTx": "3WVRZENhgLWzydTcEqFq8u3ZX3qXEkeFtBqrqHNRp9uCFxbaV8SKNMq2xbRsvkU4ivvCYtpPVhhGtpXKaqdTtGUu",
+  "createdAt": "2026-05-28T18:12:14.371Z"
+}
