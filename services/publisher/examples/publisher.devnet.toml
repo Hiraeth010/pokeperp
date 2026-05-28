@@ -25,8 +25,11 @@
 publisher_keypair_path = "./devnet-keys/publisher-4.json"
 publisher_pubkey = "HLqpyCARa14gG2QsXPNNfQNZVNwzPTZqKZjPag1RStid"
 
+# rpc_url is env-overridable so the Helius (or any paid) endpoint can be injected
+# as a secret instead of committing the API key. RPC_URL env wins; falls back to
+# public devnet for local runs. The Railway publisher-crank service sets RPC_URL.
 [oracle]
-rpc_url = "https://api.devnet.solana.com"
+rpc_url = "${RPC_URL:-https://api.devnet.solana.com}"
 oracle_program_id = "GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i"
 commitment = "confirmed"
 
