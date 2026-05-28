@@ -32,6 +32,11 @@ services/publisher/examples/*.state.json
 # load_publisher_keypair() reads when that env var is unset.
 services/publisher/devnet-keys/
 
+# ============ Mainnet keys — NEVER commit ============
+# Fresh per-role keypairs for the mainnet launch (deploy/admin, publisher,
+# keeper, multisig signers). Injected as Railway/Vercel secrets at runtime.
+mainnet-keys/
+
 # ============ Brand assets — raw card downloads ============
 # The X banner uses a few PMT25 card images embedded as base64.  We keep the
 # raw PNGs out of the repo to honor the README's "no bundled card art" policy
