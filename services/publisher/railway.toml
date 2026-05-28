@@ -1,0 +1,29 @@
+# Railway build + deploy config for the Pokeperp publisher crank.
+#
+# Build: Dockerfile-based (Rust multi-stage; see Dockerfile).
+#
+# This is a WORKER, not an HTTP service — it has no /health endpoint, so there
+# is intentionally no healthcheckPath here (unlike the scraper / indexer). Railway
+# keeps it alive via the restart policy.
+#
+# The crank polls every 60s and submits + aggregates current_day-1 whenever that
+# day isn't already on-chain. With minPublishersPerDay = 1 on devnet, the single
+# publisher-4 submission is enough to aggregate; the crank also calls
+# aggregate_day (the publisher keypair pays — it's permissionless).
+#
+# Required env vars (set in Railway dashboard → Variables): none — the devnet
+# config + committed devnet keypair are baked into the image. For mainnet, switch
+# the keypair to an injected secret (see the publisher.devnet.toml header) and
+# override SCRAPER_URL / the RPC there.
+#
+# Optional overrides:
+#   SCRAPER_URL   — scraper service base URL (else the value in publisher.devnet.toml)
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "pokeperp-publisher --config examples/publisher.devnet.toml crank --interval-secs 60"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

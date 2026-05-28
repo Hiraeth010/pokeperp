@@ -26,7 +26,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
-    signature::{read_keypair_file, Signer},
+    signature::{read_keypair_file, Keypair, Signer},
 };
 use std::str::FromStr;
 use tracing::{info, warn};
@@ -62,6 +62,16 @@ enum Command {
     },
     /// Run on a daily schedule (sleep until submit_at_utc_hour:minute, then submit, then loop).
     Daemon,
+    /// Poll every `interval_secs`; submit + aggregate for current_day-1 whenever
+    /// that day isn't already done. Idempotent no-op otherwise. Built for an
+    /// always-on host (Railway): it reacts to each UTC-midnight rollover within
+    /// one interval and retries a failed cycle on the next tick. Unlike `daemon`,
+    /// this also calls `aggregate_day` — the index actually advances.
+    Crank {
+        /// Poll interval in seconds.
+        #[arg(long, default_value_t = 60)]
+        interval_secs: u64,
+    },
     /// Re-run a day's price computation locally and compare to the on-chain
     /// PriceUpdate already submitted by this publisher. Reports per-slot deviation
     /// (basis points) and source-root match. Non-zero exit on any disagreement.
@@ -116,11 +126,34 @@ async fn main() -> Result<()> {
             result
         }
         Command::Daemon => daemon_loop(&cfg, &state_path).await,
+        Command::Crank { interval_secs } => crank_loop(&cfg, &state_path, interval_secs).await,
         Command::Verify { day, tolerance_bps } => verify_day(&cfg, day, tolerance_bps).await,
     }
 }
 
 /// One submission cycle: read on-chain state, compute prices, submit.
+/// Load the publisher signing keypair. Prefers the `PUBLISHER_KEYPAIR_JSON` env
+/// var — the standard Solana keypair byte array as JSON, exactly what
+/// `solana-keygen` / the `*.json` keypair files contain — so a deployment can
+/// inject the key as a secret instead of baking a file into the image. Falls
+/// back to `identity.publisher_keypair_path` from the config for local dev where
+/// the keypair lives on disk.
+fn load_publisher_keypair(cfg: &config::Config) -> Result<Keypair> {
+    if let Ok(json) = std::env::var("PUBLISHER_KEYPAIR_JSON") {
+        let json = json.trim();
+        if !json.is_empty() {
+            let bytes: Vec<u8> = serde_json::from_str(json).context(
+                "parsing PUBLISHER_KEYPAIR_JSON (expected a JSON array of bytes, \
+                 like a solana-keygen keypair file)",
+            )?;
+            return Keypair::from_bytes(&bytes)
+                .map_err(|e| anyhow!("PUBLISHER_KEYPAIR_JSON is not a valid keypair: {e}"));
+        }
+    }
+    read_keypair_file(&cfg.identity.publisher_keypair_path)
+        .map_err(|e| anyhow!("read keypair {}: {}", cfg.identity.publisher_keypair_path, e))
+}
+
 async fn run_daily(
     cfg: &config::Config,
     dry_run: bool,
@@ -134,8 +167,7 @@ async fn run_daily(
         CommitmentConfig::confirmed(),
     );
 
-    let keypair = read_keypair_file(&cfg.identity.publisher_keypair_path)
-        .map_err(|e| anyhow!("read keypair {}: {}", cfg.identity.publisher_keypair_path, e))?;
+    let keypair = load_publisher_keypair(cfg)?;
     let publisher_pubkey = keypair.pubkey();
     info!(publisher = %publisher_pubkey, "loaded keypair");
 
@@ -225,6 +257,97 @@ async fn daemon_loop(cfg: &config::Config, state_path: &std::path::Path) -> Resu
     }
 }
 
+/// Poll loop: every `interval_secs`, ensure `current_day - 1` is submitted and
+/// aggregated, then sleep. Each step is guarded by an on-chain existence check,
+/// so a tick where the day is already done is a cheap no-op (two `getAccount`
+/// reads). The expensive scrape only runs on the first tick after a UTC-midnight
+/// rollover; a cycle that fails partway is retried on the next tick.
+async fn crank_loop(
+    cfg: &config::Config,
+    state_path: &std::path::Path,
+    interval_secs: u64,
+) -> Result<()> {
+    let oracle_program_id = Pubkey::from_str(&cfg.oracle.oracle_program_id)
+        .context("parsing oracle.oracle_program_id")?;
+    let keypair = load_publisher_keypair(cfg)?;
+    let publisher_pubkey = keypair.pubkey();
+    info!(
+        interval_secs,
+        publisher = %publisher_pubkey,
+        rpc = %cfg.oracle.rpc_url,
+        "starting publisher crank (poll + act-on-rollover)"
+    );
+
+    let mut state = PublisherState::load(state_path)
+        .with_context(|| format!("loading state at {}", state_path.display()))?;
+
+    loop {
+        match crank_cycle(cfg, &oracle_program_id, &keypair, publisher_pubkey, &mut state).await {
+            Ok(()) => {}
+            Err(e) => warn!(error = ?e, "crank cycle failed; retrying next interval"),
+        }
+        if let Err(e) = state.save(state_path) {
+            warn!(error = ?e, "failed to save publisher state");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+    }
+}
+
+/// One crank tick: submit for `current_day - 1` if this publisher hasn't yet,
+/// then aggregate that day if the on-chain IndexState isn't already on it.
+async fn crank_cycle(
+    cfg: &config::Config,
+    oracle_program_id: &Pubkey,
+    keypair: &solana_sdk::signature::Keypair,
+    publisher_pubkey: Pubkey,
+    state: &mut PublisherState,
+) -> Result<()> {
+    let client = RpcClient::new_with_commitment(
+        cfg.oracle.rpc_url.clone(),
+        CommitmentConfig::confirmed(),
+    );
+    let current_day = (chrono::Utc::now().timestamp() / 86_400) as u32;
+    let target_day = current_day - 1;
+
+    // 1. Submit if this publisher hasn't submitted for target_day yet. The
+    //    PriceUpdate PDA is unique per (publisher, day), so its existence is the
+    //    submission marker (and a re-submit would hit DuplicateSubmission).
+    let pu_pda = submit::price_update_pda(oracle_program_id, &publisher_pubkey, target_day);
+    if client.get_account(&pu_pda).is_err() {
+        info!(day = target_day, "no submission for target day — scraping + submitting");
+        run_daily(cfg, false, Some(target_day), state)
+            .await
+            .context("run_daily (submit)")?;
+    } else {
+        info!(day = target_day, "submission already present");
+    }
+
+    // 2. Aggregate if the IndexState isn't already on target_day. aggregate_day
+    //    is permissionless, so the publisher keypair pays. Single-publisher
+    //    devnet: the only submission to fold in is our own PriceUpdate.
+    let (index_state_pda, _) =
+        Pubkey::find_program_address(&[b"index_state"], oracle_program_id);
+    let index_day = read_index_day(&client, &index_state_pda);
+    if index_day != Some(target_day) {
+        info!(day = target_day, ?index_day, "aggregating target day");
+        let sig =
+            submit::aggregate_day(&client, oracle_program_id, keypair, target_day, &[pu_pda])?;
+        info!(%sig, day = target_day, "aggregated");
+    } else {
+        info!(day = target_day, "index already current — nothing to do");
+    }
+    Ok(())
+}
+
+/// Read `IndexState.day` (u32 at byte offset 8, right after the 8-byte Anchor
+/// discriminator). Returns `None` if the account doesn't exist yet or is too
+/// short to parse.
+fn read_index_day(client: &RpcClient, index_state_pda: &Pubkey) -> Option<u32> {
+    let data = client.get_account_data(index_state_pda).ok()?;
+    let bytes: [u8; 4] = data.get(8..12)?.try_into().ok()?;
+    Some(u32::from_le_bytes(bytes))
+}
+
 /// Re-run a day's price computation locally and compare to the on-chain submission.
 ///
 /// Steps:
@@ -247,8 +370,7 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
         CommitmentConfig::confirmed(),
     );
 
-    let keypair = read_keypair_file(&cfg.identity.publisher_keypair_path)
-        .map_err(|e| anyhow!("read keypair {}: {}", cfg.identity.publisher_keypair_path, e))?;
+    let keypair = load_publisher_keypair(cfg)?;
     let publisher_pubkey = keypair.pubkey();
     info!(publisher = %publisher_pubkey, day, "verifying");
 

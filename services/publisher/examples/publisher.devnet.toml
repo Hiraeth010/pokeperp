@@ -2,20 +2,26 @@
 # devnet oracle via the Oxylabs-backed scraper service.
 #
 # Run once (current day - 1):
-#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run --once
+#   pokeperp-publisher --config examples/publisher.devnet.toml run
 #
-# Run with on-chain submission disabled (dry run, prints the prices it would submit):
-#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run --once --dry-run
+# Dry run (computes + prints prices, skips the on-chain submission):
+#   pokeperp-publisher --config examples/publisher.devnet.toml run --dry-run
 #
-# Daemon (submits daily on schedule):
-#   pokeperp-publisher --config services/publisher/examples/publisher.devnet.toml run
+# Crank (the Railway deployment): poll every 60s and submit + aggregate
+# current_day-1 whenever that day isn't already on-chain. Idempotent no-op
+# otherwise; reacts to UTC-midnight rollover within one interval. Unlike the
+# `daemon` command, the crank also calls aggregate_day, so the index advances.
+#   pokeperp-publisher --config examples/publisher.devnet.toml crank --interval-secs 60
 
 [identity]
-# Pointing at publisher-4.  Each previous publisher (admin, pub-2, pub-3)
-# has had its PriceUpdate PDA for day 20599 consumed.  Pub-4 is a fresh
-# slot for the post-curated-queries run, where we expect significantly
-# tighter prices because the search strings now use full card+set names
-# instead of "Pokemon ES 218/203 Alt Art PSA 10".
+# Signing key resolution (see load_publisher_keypair in src/main.rs):
+#   1. If the PUBLISHER_KEYPAIR_JSON env var is set (a solana-keygen byte array
+#      as JSON), it is used directly — this is how the Railway `publisher-crank`
+#      deployment injects the key as a secret, with no keypair file in the image.
+#   2. Otherwise, fall back to `publisher_keypair_path` below (local dev, where
+#      the key still lives on disk under devnet-keys/ — gitignored, untracked).
+# Currently publisher-4. Earlier publishers (admin, pub-2, pub-3) had their day-
+# 20599 PriceUpdate PDAs consumed; pub-4 is the slot the crank submits from.
 publisher_keypair_path = "./devnet-keys/publisher-4.json"
 publisher_pubkey = "HLqpyCARa14gG2QsXPNNfQNZVNwzPTZqKZjPag1RStid"
 

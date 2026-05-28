@@ -1,0 +1,6 @@
+target/
+**/*.state.json
+*.md
+# Never bake signing keys into the image — injected at runtime via
+# PUBLISHER_KEYPAIR_JSON (see Dockerfile / railway.toml).
+devnet-keys/

@@ -35,6 +35,17 @@ pub struct SubmitParams {
 const CONFIG_SEED: &[u8] = b"config";
 const PUBLISHER_SEED: &[u8] = b"publisher";
 const PRICE_UPDATE_SEED: &[u8] = b"price";
+const CONSTITUENT_REGISTRY_SEED: &[u8] = b"registry";
+const INDEX_STATE_SEED: &[u8] = b"index_state";
+
+/// Derive the PriceUpdate PDA for `(publisher, day)` — one per submission.
+pub fn price_update_pda(oracle_program_id: &Pubkey, publisher: &Pubkey, day: u32) -> Pubkey {
+    Pubkey::find_program_address(
+        &[PRICE_UPDATE_SEED, publisher.as_ref(), &day.to_le_bytes()],
+        oracle_program_id,
+    )
+    .0
+}
 
 /// SHA-256("global:<ix_name>")[0..8] — Anchor's instruction discriminator scheme.
 fn anchor_discriminator(ix_name: &str) -> [u8; 8] {
@@ -128,6 +139,66 @@ pub fn submit(
     let sig = client
         .send_and_confirm_transaction(&tx)
         .context("send_and_confirm_transaction")?;
+    Ok(sig)
+}
+
+/// Sign and send an `aggregate_day` transaction for `day`. `price_updates` are
+/// the PriceUpdate accounts to fold into the per-constituent median (passed as
+/// remaining accounts; the program filters by day and validates program
+/// ownership). `caller` pays the fee — and the IndexState rent on the very first
+/// aggregation. The instruction is permissionless on-chain.
+///
+/// Accounts order MUST match programs/oracle/src/lib.rs `AggregateDay`:
+///   config (ro), registry (mut), index_state (mut, init_if_needed), caller
+///   (signer/mut), system_program (ro), then the variable PriceUpdate tail.
+pub fn aggregate_day(
+    client: &RpcClient,
+    oracle_program_id: &Pubkey,
+    caller: &Keypair,
+    day: u32,
+    price_updates: &[Pubkey],
+) -> Result<Signature> {
+    let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], oracle_program_id);
+    let (registry_pda, _) =
+        Pubkey::find_program_address(&[CONSTITUENT_REGISTRY_SEED], oracle_program_id);
+    let (index_state_pda, _) =
+        Pubkey::find_program_address(&[INDEX_STATE_SEED], oracle_program_id);
+
+    let disc = anchor_discriminator("aggregate_day");
+    let mut data = Vec::with_capacity(8 + 4);
+    data.extend_from_slice(&disc);
+    data.extend_from_slice(&day.to_le_bytes());
+
+    let mut accounts = vec![
+        AccountMeta::new_readonly(config_pda, false),
+        AccountMeta::new(registry_pda, false),
+        AccountMeta::new(index_state_pda, false),
+        AccountMeta::new(caller.pubkey(), true),
+        AccountMeta::new_readonly(system_program::ID, false),
+    ];
+    for pu in price_updates {
+        accounts.push(AccountMeta::new_readonly(*pu, false));
+    }
+
+    let ix = Instruction {
+        program_id: *oracle_program_id,
+        accounts,
+        data,
+    };
+
+    let blockhash = client
+        .get_latest_blockhash()
+        .context("get_latest_blockhash")?;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&caller.pubkey()),
+        &[caller],
+        blockhash,
+    );
+
+    let sig = client
+        .send_and_confirm_transaction(&tx)
+        .context("send_and_confirm aggregate_day")?;
     Ok(sig)
 }
 

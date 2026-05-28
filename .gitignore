@@ -26,6 +26,12 @@ services/indexer/data/*.jsonl
 # regenerated on every run — not source.
 services/publisher/examples/*.state.json
 
+# ============ Publisher signing keypairs ============
+# Injected at runtime via the PUBLISHER_KEYPAIR_JSON env var (Railway secret);
+# never committed. The local files here are only the local-dev fallback that
+# load_publisher_keypair() reads when that env var is unset.
+services/publisher/devnet-keys/
+
 # ============ Brand assets — raw card downloads ============
 # The X banner uses a few PMT25 card images embedded as base64.  We keep the
 # raw PNGs out of the repo to honor the README's "no bundled card art" policy
