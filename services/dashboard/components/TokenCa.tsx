@@ -37,7 +37,7 @@ export default function TokenCa() {
           </p>
         )}
         <p className="mt-1 text-[10px] text-[rgb(var(--muted))]">
-          Token launching soon — always verify the CA here before buying.
+          Always verify the CA here before buying.
         </p>
       </div>
       {CA && (
