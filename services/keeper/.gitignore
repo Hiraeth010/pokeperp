@@ -1,0 +1,5 @@
+node_modules/
+# Keeper signing key — injected at runtime via KEEPER_KEYPAIR_JSON (Railway
+# secret). Any local key file stays out of git.
+*.keeper.json
+keeper-keypair.json
