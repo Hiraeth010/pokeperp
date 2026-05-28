@@ -4,6 +4,7 @@ import { Inter, Russo_One } from "next/font/google";
 import WalletProvider from "@/components/WalletProvider";
 import Nav from "@/components/Nav";
 import DevnetBanner from "@/components/DevnetBanner";
+import AnnouncementBanner from "@/components/AnnouncementBanner";
 
 const body = Inter({
   subsets: ["latin"],
@@ -33,6 +34,7 @@ export default function RootLayout({
     <html lang="en" className={`${body.variable} ${display.variable}`}>
       <body className="font-sans">
         <WalletProvider>
+          <AnnouncementBanner />
           {/* Network status strip — picks devnet-warning / mainnet-live-soon /
               none based on NEXT_PUBLIC_NETWORK + NEXT_PUBLIC_TRADING_LIVE. */}
           <DevnetBanner />
