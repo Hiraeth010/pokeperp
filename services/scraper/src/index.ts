@@ -110,7 +110,10 @@ function buildEbayUrl(query: string): string {
     LH_Sold: "1",
     LH_Complete: "1",
     LH_PrefLoc: "1",
-    _ipg: "240",
+    // 120 items/page is the sweet spot: ~120-130 result cards (plenty for the
+    // downstream PSA 10 filter + trimmed mean) at ~2MB, vs 240's ~3.5MB page
+    // that made Oxylabs's render step time out and fault with status 613.
+    _ipg: "120",
     _sop: "13",
   });
   return `https://www.ebay.com/sch/i.html?${params.toString()}`;
@@ -118,21 +121,22 @@ function buildEbayUrl(query: string): string {
 
 /** Submit one search URL to Oxylabs, return raw HTML.
  *
- *  Retries up to 2 additional times (3 total attempts) on transient Oxylabs
- *  failures — most commonly upstream `status_code: 613` ("no results / parse
- *  failed"), which empirically resolves on retry because Oxylabs rotates to a
- *  different residential IP + retries eBay on its side.  Backs off 2s, then
- *  4s between attempts to give Oxylabs's internal queues breathing room.
+ *  We do NOT pass `render: "html"`: eBay sold-search result cards are present in
+ *  the server-rendered HTML (verified — render vs no-render returned identical
+ *  card counts), and the headless-browser render step was the main source of
+ *  Oxylabs `613` faults and 40s+ latencies on the heavier pages.
  *
- *  Retryable signals:
- *    - upstream status_code != 200 (613, 612, etc — eBay-side rejections)
- *    - Oxylabs HTTP 5xx (their infra hiccup)
- *    - empty content despite 200 (parsing issue)
- *
- *  Non-retryable: 401 auth failures, 400 malformed requests — caller bug,
- *  retrying won't help. */
+ *  Retry policy (hardcoded, deliberately aggressive — we're on a paid Oxylabs
+ *  plan so retries are cheap and worth it to avoid stale-price fallbacks in the
+ *  index): up to MAX_ATTEMPTS total, exponential backoff (2s→4s→8s→16s, capped
+ *  at 30s) with ±20% jitter. EVERYTHING is retried — upstream 613/5xx, empty/
+ *  stub bodies, request timeouts, and transient network errors — EXCEPT auth
+ *  (401) and malformed-request (400) failures, which are caller bugs that no
+ *  amount of retrying will fix. */
+const MAX_ATTEMPTS = 6;
+const PER_ATTEMPT_TIMEOUT_MS = 90_000;
+
 async function fetchViaOxylabs(url: string): Promise<string> {
-  const MAX_ATTEMPTS = 3;
   let lastErr: Error | null = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -148,20 +152,19 @@ async function fetchViaOxylabs(url: string): Promise<string> {
         body: JSON.stringify({
           source: "universal",
           url,
-          render: "html",
           geo_location: OXYLABS_GEO,
         }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS),
       });
 
       // Auth + malformed-request errors are caller bugs; don't retry.
       if (resp.status === 401 || resp.status === 400) {
-        throw new Error(`oxylabs HTTP ${resp.status}: ${await resp.text()}`);
-      }
-      if (!resp.ok) {
-        throw new RetryableError(
+        throw new NonRetryableError(
           `oxylabs HTTP ${resp.status}: ${await resp.text()}`,
         );
+      }
+      if (!resp.ok) {
+        throw new Error(`oxylabs HTTP ${resp.status}: ${await resp.text()}`);
       }
 
       const payload = (await resp.json()) as {
@@ -169,19 +172,17 @@ async function fetchViaOxylabs(url: string): Promise<string> {
         errors?: unknown;
       };
       if (payload.errors) {
-        throw new RetryableError(
-          `oxylabs errors: ${JSON.stringify(payload.errors)}`,
-        );
+        throw new Error(`oxylabs errors: ${JSON.stringify(payload.errors)}`);
       }
       const first = payload.results?.[0];
-      if (!first) throw new RetryableError("oxylabs: no results in response");
+      if (!first) throw new Error("oxylabs: no results in response");
       if (first.status_code !== 200) {
-        throw new RetryableError(`oxylabs upstream status ${first.status_code}`);
+        throw new Error(`oxylabs upstream status ${first.status_code}`);
       }
       const content = first.content ?? "";
       if (content.length < 1000) {
         // Suspiciously small HTML = likely a redirect / CAPTCHA stub.  Retry.
-        throw new RetryableError(
+        throw new Error(
           `oxylabs returned ${content.length}-byte body (likely a stub)`,
         );
       }
@@ -191,11 +192,12 @@ async function fetchViaOxylabs(url: string): Promise<string> {
       return content;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      const isRetryable = e instanceof RetryableError;
-      if (!isRetryable || attempt === MAX_ATTEMPTS) {
+      // Retry anything that isn't an explicit caller-bug (auth/malformed).
+      if (e instanceof NonRetryableError || attempt === MAX_ATTEMPTS) {
         throw lastErr;
       }
-      const backoffMs = 2_000 * attempt; // 2s, 4s
+      const base = Math.min(30_000, 1_000 * 2 ** attempt); // 2s,4s,8s,16s,30s
+      const backoffMs = Math.round(base * (0.8 + Math.random() * 0.4)); // ±20% jitter
       console.log(
         `  ⚠ attempt ${attempt}/${MAX_ATTEMPTS} failed: ${lastErr.message.slice(0, 80)} — retrying in ${backoffMs}ms`,
       );
@@ -205,11 +207,12 @@ async function fetchViaOxylabs(url: string): Promise<string> {
   throw lastErr ?? new Error("oxylabs: exhausted retries with no error");
 }
 
-/** Marker class so the retry loop knows to retry vs. abort. */
-class RetryableError extends Error {
+/** Marker class for caller-bug failures (auth/malformed) the retry loop must
+ *  NOT retry. Everything else is retried. */
+class NonRetryableError extends Error {
   constructor(msg: string) {
     super(msg);
-    this.name = "RetryableError";
+    this.name = "NonRetryableError";
   }
 }
 
