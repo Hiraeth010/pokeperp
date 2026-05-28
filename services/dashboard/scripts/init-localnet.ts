@@ -32,7 +32,8 @@ import PerpIdl from "../lib/idl/perp_engine.json";
 import type { Oracle } from "../lib/idl/oracle";
 import type { PerpEngine } from "../lib/idl/perp_engine";
 
-const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
+import { resolveRpc } from "./rpc";
+const RPC = resolveRpc();
 const WALLET_PATH =
   process.env.WALLET_PATH ?? path.join(os.homedir(), ".config", "solana", "id.json");
 

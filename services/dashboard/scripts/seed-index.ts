@@ -26,7 +26,8 @@ import * as path from "node:path";
 import OracleIdl from "../lib/idl/oracle.json";
 import type { Oracle } from "../lib/idl/oracle";
 
-const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8899";
+import { resolveRpc } from "./rpc";
+const RPC = resolveRpc();
 const WALLET_PATH =
   process.env.WALLET_PATH ?? path.join(os.homedir(), ".config", "solana", "id.json");
 
