@@ -15,10 +15,17 @@ export default function TradePage() {
           <div className="tcg-card h-96 flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="label-caps">Mark vs Index</h2>
-              <div className="flex items-center gap-3 text-[10px] text-[rgb(var(--muted))]">
+              <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[10px] text-[rgb(var(--muted))]">
                 <span className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--electric-to))]" />
-                  Mark
+                  Mark (TWAP)
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block w-3 border-t-2 border-dashed"
+                    style={{ borderColor: "rgb(255, 140, 30)" }}
+                  />
+                  Spot mark
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--psychic-from))]" />
