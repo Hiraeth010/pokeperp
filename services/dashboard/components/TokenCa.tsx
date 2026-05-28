@@ -2,14 +2,18 @@
 
 import { useState } from "react";
 
-/** Official $POKE token contract address (SPL mint). The token launches on
- *  mainnet from this vanity address; shown so holders can verify the CA. */
-const CA = "pokeHAfu5hjQbKaHfQJns3BUVRYMLvPfKJHKx9sBBtX";
+/** Official $POKE token contract address. Driven by NEXT_PUBLIC_TOKEN_CA so it
+ *  can be hidden/shown without a code change:
+ *    - env set   → show the address + copy button
+ *    - env unset → keep the pill + wording, show a "revealed at launch" placeholder
+ *  To reveal at launch, set NEXT_PUBLIC_TOKEN_CA=<mint> in Vercel and redeploy. */
+const CA = process.env.NEXT_PUBLIC_TOKEN_CA ?? "";
 
 export default function TokenCa() {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
+    if (!CA) return;
     try {
       await navigator.clipboard.writeText(CA);
       setCopied(true);
@@ -25,19 +29,27 @@ export default function TokenCa() {
         <p className="label-caps mb-1">
           <span className="text-[rgb(var(--electric-from))]">$POKE</span> Contract Address
         </p>
-        <p className="font-mono text-xs sm:text-sm break-all leading-snug">{CA}</p>
+        {CA ? (
+          <p className="font-mono text-xs sm:text-sm break-all leading-snug">{CA}</p>
+        ) : (
+          <p className="font-mono text-xs sm:text-sm leading-snug text-[rgb(var(--muted))]">
+            Revealed at launch — coming soon
+          </p>
+        )}
         <p className="mt-1 text-[10px] text-[rgb(var(--muted))]">
           Token launching soon — always verify the CA here before buying.
         </p>
       </div>
-      <button
-        type="button"
-        onClick={copy}
-        aria-label="Copy $POKE contract address"
-        className="shrink-0 self-start sm:self-auto rounded-lg border border-[rgb(var(--border-subtle))] px-3 py-2 text-xs font-semibold transition hover:bg-white/5"
-      >
-        {copied ? "Copied ✓" : "Copy"}
-      </button>
+      {CA && (
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copy $POKE contract address"
+          className="shrink-0 self-start sm:self-auto rounded-lg border border-[rgb(var(--border-subtle))] px-3 py-2 text-xs font-semibold transition hover:bg-white/5"
+        >
+          {copied ? "Copied ✓" : "Copy"}
+        </button>
+      )}
     </div>
   );
 }
