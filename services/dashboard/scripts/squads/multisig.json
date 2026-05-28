@@ -1,0 +1,13 @@
+{
+  "cluster": "devnet",
+  "multisigPda": "38DihGm8gm5tXP9fJuzqDnEutbxmKBezBq7Y47U3mQMv",
+  "vaultPda": "Gx3YnjNHTx71mjFbEkA2DbD65WuGXQDWyvUmFhWRzppo",
+  "threshold": 2,
+  "members": [
+    "4HFrD7pzn72rqmGwadV7AouYLiFSfuLtgL4LWMVXQpG9",
+    "GjxX6NXjWNDRSHAuEK35pKdRuxQZzEwE4LYRivuZmdWT",
+    "HDL3SyqSDkzoBW9drk4yePivF8AP5d5soQpLRoD9GKpB"
+  ],
+  "createTx": "2TrxX2TEzH7zToEwBpj87e7UvgXE6kuaxGameVHdF2FXj3ddJxeP4TwpLLU8oBqvt7BRW6ZwDm5UU8Nw6K2fZ5o9",
+  "createdAt": "2026-05-28T13:12:51.526Z"
+}

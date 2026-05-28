@@ -6,4 +6,7 @@ out
 *.tsbuildinfo
 next-env.d.ts
 
+# Multisig co-signer keypairs — never commit (devnet practice keys; mainnet uses independent custody)
+scripts/squads/keys/
+
 .vercel
