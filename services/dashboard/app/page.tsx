@@ -1,4 +1,5 @@
 import IndexCard from "@/components/IndexCard";
+import TokenCa from "@/components/TokenCa";
 import TopMovers from "@/components/TopMovers";
 import MarketState from "@/components/MarketState";
 
@@ -6,6 +7,7 @@ export default function Home() {
   return (
     <div className="space-y-6">
       <IndexCard />
+      <TokenCa />
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <TopMovers />
