@@ -7,23 +7,24 @@
 # keeps it alive via the restart policy.
 #
 # The crank polls every 60s and submits + aggregates current_day-1 whenever that
-# day isn't already on-chain. With minPublishersPerDay = 1 on devnet, the single
-# publisher-4 submission is enough to aggregate; the crank also calls
-# aggregate_day (the publisher keypair pays — it's permissionless).
+# day isn't already on-chain. With minPublishersPerDay = 1, the single operator
+# publisher submission is enough to aggregate; the crank also calls aggregate_day
+# (the publisher keypair pays — it's permissionless).
 #
-# Required env vars (set in Railway dashboard → Variables): none — the devnet
-# config + committed devnet keypair are baked into the image. For mainnet, switch
-# the keypair to an injected secret (see the publisher.devnet.toml header) and
-# override SCRAPER_URL / the RPC there.
+# Required env vars (set in Railway dashboard → Variables) for the MAINNET crank:
+#   RPC_URL                 mainnet Helius endpoint (paid)
+#   PUBLISHER_KEYPAIR_JSON  mainnet publisher signing key as a JSON byte array
+#                           (mainnet-keys/publisher.json) — injected as a secret,
+#                           so no key file ships in the image.
 #
 # Optional overrides:
-#   SCRAPER_URL   — scraper service base URL (else the value in publisher.devnet.toml)
+#   SCRAPER_URL   — scraper service base URL (else the value in publisher.mainnet.toml)
 
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "pokeperp-publisher --config examples/publisher.devnet.toml crank --interval-secs 60"
+startCommand = "pokeperp-publisher --config examples/publisher.mainnet.toml crank --interval-secs 60"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

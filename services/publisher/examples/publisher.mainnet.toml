@@ -1,0 +1,57 @@
+# Mainnet publisher config — submits real eBay-derived PSA 10 prices to the live
+# mainnet oracle via the Oxylabs-backed scraper service, then aggregates the day.
+#
+# Crank (the Railway publisher-crank deployment): poll every 60s and submit +
+# aggregate current_day-1 whenever that day isn't already on-chain. Idempotent
+# no-op otherwise; reacts to UTC-midnight rollover within one interval.
+#   pokeperp-publisher --config examples/publisher.mainnet.toml crank --interval-secs 60
+#
+# REQUIRED env (set as Railway secrets — never committed):
+#   RPC_URL                 mainnet Helius endpoint (paid). Falls back to public
+#                           mainnet for local dry runs.
+#   PUBLISHER_KEYPAIR_JSON  the mainnet publisher signing key as a JSON byte array
+#                           (mainnet-keys/publisher.json contents). load_publisher_keypair
+#                           prefers this over publisher_keypair_path, so no key
+#                           file ships in the image.
+
+[identity]
+# Local-dev fallback only; Railway injects PUBLISHER_KEYPAIR_JSON instead.
+publisher_keypair_path = "../../mainnet-keys/publisher.json"
+publisher_pubkey = "FRmRRxc46eL2bHg3WJfNCaPWXKgZRkn9iJGbPDGxEStx"
+
+[oracle]
+rpc_url = "${RPC_URL:-https://api.mainnet-beta.solana.com}"
+oracle_program_id = "GXEGbfvQvUh77udPyDYeVxgMZYd4BWLtu164dcLhqJ4i"
+commitment = "confirmed"
+
+[methodology]
+trim_top_pct = 10
+trim_bottom_pct = 10
+# Single-operator oracle (one publisher → no cross-publisher median), so we want
+# enough samples that one outlier doesn't dominate a constituent's price.
+min_sample_size = 5
+window_days_primary = 7
+window_days_fallback = [14, 30]
+stale_decay_pct_per_day = 0.5
+
+[sources]
+primary = "scraper"
+secondary = []
+
+[sources.scraper]
+url = "https://pokeperps-production.up.railway.app"
+
+[schedule]
+submit_at_utc_hour = 22
+submit_at_utc_minute = 0
+retry_max_attempts = 3
+retry_backoff_seconds = 60
+
+[observability]
+metrics_port = 9100
+log_level = "info"
+log_format = "plain"
+
+[security]
+allow_dry_run_only = false
+require_sample_count_consistency = true
