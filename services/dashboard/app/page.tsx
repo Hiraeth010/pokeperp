@@ -18,6 +18,17 @@ export default function Home() {
         Index settles against trailing 90-day eBay PSA 10 sold dollar volume ·
         rebalanced monthly · English-language PSA 10 only
       </p>
+
+      <p className="text-center pb-2">
+        <a
+          href="https://fomo.family/profile/PokePerpss"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-semibold text-[rgb(var(--electric-from))] underline decoration-[rgb(var(--electric-from))]/40 underline-offset-2 transition-colors hover:text-[rgb(var(--electric-to))]"
+        >
+          Fomo DevBuyBack Holdings ↗
+        </a>
+      </p>
     </div>
   );
 }
