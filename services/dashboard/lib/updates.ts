@@ -15,6 +15,14 @@ export type Update = {
 
 export const UPDATES: Update[] = [
   {
+    id: "2026-05-29-5x-live",
+    date: "2026-05-29",
+    tag: "Release",
+    body: `**5× leverage is live.** You can now go up to **5×** long or short on the PSA 10 Modern Top 25 — live on-chain and usable right now on the site. Per-trader and open-interest caps stay conservative for now and scale up as the insurance fund grows. [On-chain proof ↗](https://solscan.io/tx/93JMP5BoG8Z6oy7J2FvBuzEzSjZ1RZfJ8WK8ZK9fCYgHJ5zgLmtxz4o4N2H7yWsuq82zBAuZ1gHTaWT8pjMS31Y)
+
+**Reliability upgrade.** Live market and index data now stream over our hardened RPC path — a more stable connection with fewer hiccups.`,
+  },
+  {
     id: "2026-05-29-since-launch",
     date: "2026-05-29",
     tag: "Changelog",
