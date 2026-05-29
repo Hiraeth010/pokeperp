@@ -34,6 +34,7 @@ export default function Nav() {
           <NavLink href="/">Index</NavLink>
           <NavLink href="/trade">Trade</NavLink>
           <NavLink href="/portfolio">Portfolio</NavLink>
+          <NavLink href="/updates">Updates</NavLink>
           <NavLink href="/docs">Docs</NavLink>
           <a
             href="https://x.com/pokeperpsss"
