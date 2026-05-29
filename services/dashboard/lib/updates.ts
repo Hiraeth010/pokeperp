@@ -18,7 +18,7 @@ export const UPDATES: Update[] = [
     id: "2026-05-29-feed-live",
     date: "2026-05-29",
     tag: "News",
-    body: "**Welcome to the Pokeperp updates feed.** This is our official, on-site home for announcements, releases, and news — straight from the team and impossible to take down. We'll still cross-post to X ([@pokeperpsss](https://x.com/pokeperpsss)), but updates land here first. Bookmark it.",
+    body: "**Welcome to the Pokeperp updates feed.** This is our official, on-site home for announcements, releases, and news — straight from the team and impossible to take down. Our X account is currently down, so **this feed is the source of truth** for now — check here for everything. Bookmark it.",
   },
   {
     id: "2026-05-29-poke-buybacks",
