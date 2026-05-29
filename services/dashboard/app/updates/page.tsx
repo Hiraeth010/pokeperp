@@ -36,8 +36,8 @@ export default function UpdatesPage() {
             className="text-[rgb(var(--psychic-from))] hover:underline"
           >
             X @{HANDLE}
-          </a>
-          .
+          </a>{" "}
+          (currently bugged — updates will come through this feed).
         </p>
       </header>
 
