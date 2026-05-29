@@ -15,12 +15,12 @@ export default function AnnouncementBanner() {
         <span className="font-medium tracking-wide">
           Follow the official Pokeperp X —{" "}
           <a
-            href="https://x.com/PokePerpDex"
+            href="https://x.com/PokePerpss"
             target="_blank"
             rel="noopener noreferrer"
             className="font-bold underline decoration-[rgb(var(--psychic-from))]/60 underline-offset-2 hover:text-[rgb(var(--psychic-to))]"
           >
-            @PokePerpDex
+            @PokePerpss
           </a>
         </span>
       </div>

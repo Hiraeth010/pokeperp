@@ -35,8 +35,8 @@ export default function DevnetBanner() {
             <span className="uppercase font-bold text-sky-300 mr-1.5">Live on Mainnet</span>
             <span className="opacity-90">
               — the PMT25 index is live on-chain. Trading isn&apos;t open yet; we&apos;ll announce on{" "}
-              <a href="https://x.com/PokePerpDex" target="_blank" rel="noopener noreferrer"
-                className="underline decoration-sky-400/60 underline-offset-2 hover:text-sky-100">@PokePerpDex</a>.
+              <a href="https://x.com/PokePerpss" target="_blank" rel="noopener noreferrer"
+                className="underline decoration-sky-400/60 underline-offset-2 hover:text-sky-100">@PokePerpss</a>.
             </span>
           </span>
         </div>
@@ -53,8 +53,8 @@ export default function DevnetBanner() {
           <span className="uppercase font-bold text-amber-300 mr-1.5">Testing on Devnet</span>
           <span className="opacity-90">
             — programs + USDC are devnet test versions. Don&apos;t use real funds. We&apos;ll announce Mainnet launch on{" "}
-            <a href="https://x.com/PokePerpDex" target="_blank" rel="noopener noreferrer"
-              className="underline decoration-amber-400/60 underline-offset-2 hover:text-amber-100">@PokePerpDex</a>.
+            <a href="https://x.com/PokePerpss" target="_blank" rel="noopener noreferrer"
+              className="underline decoration-amber-400/60 underline-offset-2 hover:text-amber-100">@PokePerpss</a>.
           </span>
         </span>
       </div>

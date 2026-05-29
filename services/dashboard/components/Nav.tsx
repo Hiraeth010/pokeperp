@@ -36,11 +36,11 @@ export default function Nav() {
           <NavLink href="/portfolio">Portfolio</NavLink>
           <NavLink href="/docs">Docs</NavLink>
           <a
-            href="https://x.com/PokePerpDex"
+            href="https://x.com/PokePerpss"
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Follow @PokePerpDex on X"
-            title="Follow @PokePerpDex on X"
+            aria-label="Follow @PokePerpss on X"
+            title="Follow @PokePerpss on X"
             className="hidden sm:inline-flex ml-1 p-2 rounded-md text-[rgb(var(--muted))] hover:text-white hover:bg-[rgb(var(--background-elevated))] transition-colors"
           >
             <XIcon size={14} />
