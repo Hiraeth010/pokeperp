@@ -41,6 +41,23 @@ export default function UpdatesPage() {
         </p>
       </header>
 
+      <a
+        href="https://github.com/Hiraeth010/pokeperp"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block tcg-card transition hover:border-[rgb(var(--electric-from))]/50"
+      >
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
+          <span aria-hidden>📌</span> Pinned
+        </div>
+        <p className="text-sm leading-7 text-[rgb(var(--foreground))]/90">
+          Pokeperp is a fully open-sourced perp DEX trading against the PSA 10 Modern Top 25 Pokémon Card Index.
+        </p>
+        <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-[rgb(var(--electric-from))]">
+          View the source on GitHub ↗
+        </span>
+      </a>
+
       <div className="space-y-4">
         {posts.map((u) => (
           <article key={u.id} className="tcg-card">

@@ -15,6 +15,29 @@ export type Update = {
 
 export const UPDATES: Update[] = [
   {
+    id: "2026-05-29-since-launch",
+    date: "2026-05-29",
+    tag: "Changelog",
+    body: `**Since launch:**
+
+- **12 SOL** of buybacks have gone into the $POKE chart in total.
+- Fixed an indexer config that was displaying data incorrectly, which reset the chart. The on-chain data was always correct — it was purely a visual issue.
+- **2 major bugs** were hunted and patched, upgrading the perp engine on-chain.`,
+  },
+  {
+    id: "2026-05-29-tokenomics",
+    date: "2026-05-29",
+    tag: "Tokenomics",
+    body: `**How the 5% / 5% tax works — and where it goes.** Every buy and sell carries a 5% tax:
+
+- **Treasury** — a portion funds marketing, protocol updates, and ongoing development.
+- **Insurance fund** — the bulk goes here. As we onboard more active users, run more testing, and grow the index, a larger insurance fund lets us safely raise available leverage. Leverage is capped at **3x** today; the goal is **100x**, but the insurance fund needs to be much larger before that's possible.
+
+**90% buyback model.** All protocol fees generated are used to buy back $POKE and flywheel the token (the remaining 10% routes to the insurance fund). This allocation stays flexible and may adjust as the product scales.
+
+**Dev supply (10%) is locked & vested** in the contract config itself — releasing 5M $POKE every 15 days to the deployer wallet, starting ~15 days from migration. This supply will never be sold by the team; it will be used strategically. [On-chain proof ↗](https://solscan.io/tx/5zxaVrQG8iHqfdGv78tHirtDJSqpaAqWb1Ci4gX6mGdo3QJPnpY8LuKDsaTbqA5MW7rzVNXo9tivT8TNCAX96R9M)`,
+  },
+  {
     id: "2026-05-29-feed-live",
     date: "2026-05-29",
     tag: "News",
