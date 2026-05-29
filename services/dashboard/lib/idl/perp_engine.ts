@@ -2016,6 +2016,12 @@ export type PerpEngine = {
           "writable": true
         },
         {
+          "name": "indexState",
+          "docs": [
+            "Oracle index for the equity (mark-PnL) solvency check on withdrawal (v0.9)."
+          ]
+        },
+        {
           "name": "tokenProgram",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }

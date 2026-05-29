@@ -392,6 +392,7 @@ describe("perp-engine integration", () => {
           position: positionPda,
           marginVault: marginVaultPda,
           traderUsdcAccount: traderUsdcAta,
+          indexState: indexStatePda,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([trader])

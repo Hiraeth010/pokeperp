@@ -173,6 +173,7 @@ export function useTradeActions() {
           .accounts({
             trader: publicKey,
             traderUsdcAccount: ata,
+            indexState: indexStatePda(),
             tokenProgram: TOKEN_PROGRAM_ID,
           } as never)
           .preInstructions(preIxs)

@@ -991,12 +991,55 @@ pub mod perp_engine {
         require!(current >= amount, PerpError::InsufficientMargin);
         let post = current - amount;
 
-        let abs_size = ctx.accounts.position.size.unsigned_abs();
+        let position_size = ctx.accounts.position.size;
+        let abs_size = position_size.unsigned_abs();
         let required_im = (abs_size as u128)
             .checked_mul(ctx.accounts.market.initial_margin_bps as u128)
             .and_then(|x| x.checked_div(10_000))
             .ok_or(PerpError::MathOverflow)? as u64;
+        // (1) Raw post-withdrawal collateral must cover IM (unchanged).
         require!(post >= required_im, PerpError::WithdrawalBlockedByMargin);
+
+        // (2) v0.9 fix: REAL EQUITY (collateral + unrealized PnL − funding owed)
+        // must also cover IM. Previously only raw collateral (1) was checked, so a
+        // losing position could withdraw down to the IM line on raw margin while
+        // real equity sat far below it — letting traders strip collateral out of
+        // weak positions and push the book toward insolvency. Equity is valued the
+        // same way close_position does: mark-based price PnL vs entry, minus funding.
+        let index_state = &ctx.accounts.index_state;
+        require!(
+            index_state.status == IndexStatus::Provisional
+                || index_state.status == IndexStatus::Final,
+            PerpError::OracleStale
+        );
+        let index_price = index_state.index_value;
+        require!(index_price > 0, PerpError::OracleStale);
+        let mark_price = compute_mark_price(
+            index_price,
+            ctx.accounts.market.long_oi,
+            ctx.accounts.market.short_oi,
+            ctx.accounts.market.oi_floor,
+            ctx.accounts.market.slippage_factor,
+        )?;
+        let entry_mark = ctx.accounts.position.entry_mark_price;
+        require!(entry_mark > 0, PerpError::MathOverflow);
+        let price_pnl = (position_size as i128)
+            .checked_mul((mark_price as i128) - (entry_mark as i128))
+            .and_then(|x| x.checked_div(entry_mark as i128))
+            .ok_or(PerpError::MathOverflow)?;
+        let funding_owed = position_funding_owed(
+            ctx.accounts.market.cumulative_funding_long,
+            ctx.accounts.position.cumulative_funding_snapshot,
+            position_size,
+        )?;
+        let equity_post = (post as i128)
+            .checked_add(price_pnl)
+            .and_then(|x| x.checked_sub(funding_owed))
+            .ok_or(PerpError::MathOverflow)?;
+        require!(
+            equity_post >= required_im as i128,
+            PerpError::WithdrawalBlockedByMargin
+        );
 
         // PDA-signed transfer: margin vault authority = position PDA.
         let trader_key = ctx.accounts.trader.key();
@@ -2337,6 +2380,12 @@ pub struct WithdrawMargin<'info> {
 
     #[account(mut, token::authority = trader)]
     pub trader_usdc_account: Box<Account<'info, TokenAccount>>,
+
+    /// Oracle index for the equity (mark-PnL) solvency check on withdrawal (v0.9).
+    #[account(
+        constraint = index_state.key() == market.oracle_index_state @ PerpError::OracleStale,
+    )]
+    pub index_state: Box<Account<'info, IndexState>>,
 
     pub token_program: Program<'info, Token>,
 }

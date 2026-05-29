@@ -2010,6 +2010,12 @@
           "writable": true
         },
         {
+          "name": "index_state",
+          "docs": [
+            "Oracle index for the equity (mark-PnL) solvency check on withdrawal (v0.9)."
+          ]
+        },
+        {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }

@@ -168,6 +168,7 @@ async function main(): Promise<void> {
     .accounts({
       trader: wallet.publicKey,
       traderUsdcAccount: ata,
+      indexState: indexStatePda,
       tokenProgram: TOKEN_PROGRAM_ID,
     } as never)
     .rpc();

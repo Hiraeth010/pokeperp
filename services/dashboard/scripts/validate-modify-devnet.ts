@@ -82,6 +82,10 @@ async function main() {
     traderUsdcAccount: ata, usdcMint, insuranceFund: insuranceFundPda, insuranceVault: insuranceVaultPda,
     treasuryVault: treasuryVaultPda, treasury: treasuryPda, indexState: indexStatePda, tokenProgram: TOKEN_PROGRAM_ID,
   } as never).signers([t]).rpc();
+  const withdraw = (t: Keypair, ata: PublicKey, amount: BN) => perp.methods.withdrawMargin(amount).accounts({
+    market: marketPda, trader: t.publicKey, position: posPda(t.publicKey), marginVault: mvPda(t.publicKey),
+    traderUsdcAccount: ata, indexState: indexStatePda, tokenProgram: TOKEN_PROGRAM_ID,
+  } as never).signers([t]).rpc();
   const entryOf = async (t: Keypair) => new BN((await perp.account.position.fetch(posPda(t.publicKey))).entryMarkPrice.toString());
   const vbal = async (p: PublicKey) => BigInt((await getAccount(conn, p)).amount);
 
@@ -116,8 +120,34 @@ async function main() {
   check("B. decrease leaves remaining entry unchanged", entryAfter.eq(entryBefore),
     `entry ${usd(entryBefore)} -> ${usd(entryAfter)}`);
 
+  // ---- Scenario C: withdraw_margin can't strip collateral from an underwater position ----
+  const C = await spawnTrader(8_000_000_000n);
+  const D = await spawnTrader(30_000_000_000n);
+  await open(C.kp, C.ata, new BN(5_000_000_000), new BN(4_000_000_000)); // 5k long, 4k margin (IM=1.65k)
+  // C1: a healthy position CAN still withdraw down toward IM.
+  const mvC0 = await vbal(mvPda(C.kp.publicKey));
+  await withdraw(C.kp, C.ata, new BN(200_000_000)); // -$200 while healthy
+  const mvC1 = await vbal(mvPda(C.kp.publicKey));
+  check("C. healthy position can still withdraw", mvC1 === mvC0 - 200_000_000n,
+    `margin ${usd(mvC0.toString())} -> ${usd(mvC1.toString())}`);
+  // Push mark DOWN so C is underwater (unrealized loss).
+  await open(D.kp, D.ata, new BN(-50_000_000_000), new BN(20_000_000_000)); // 50k short
+  // C2: withdrawing the raw-margin max (margin - IM) must REVERT — raw check would
+  // pass but real equity is now below IM. Pre-fix this succeeded (the bug).
+  const mvC = await vbal(mvPda(C.kp.publicKey));
+  const imC = 5_000_000_000n * BigInt(market.initialMarginBps) / 10_000n;
+  const rawMax = mvC - imC; // leaves raw margin exactly at IM
+  let reverted = false;
+  try { await withdraw(C.kp, C.ata, new BN(rawMax.toString())); }
+  catch { reverted = true; }
+  const mvC2 = await vbal(mvPda(C.kp.publicKey));
+  check("C. underwater over-withdraw is blocked", reverted && mvC2 === mvC,
+    `tried to withdraw ${usd(rawMax.toString())} (raw-rule max) on an underwater position -> ${reverted ? "REVERTED" : "ALLOWED (BUG!)"}, margin unchanged ${mvC2 === mvC}`);
+
   // ---- cleanup ----
   try { await close(A.kp, A.ata); console.log("\ncleanup: closed A"); } catch (e: any) { console.log("cleanup A close err:", e?.message); }
+  try { await close(C.kp, C.ata); } catch (e: any) { console.log("cleanup C close err:", e?.message); }
+  try { await close(D.kp, D.ata); } catch (e: any) { console.log("cleanup D close err:", e?.message); }
   const m2: any = await perp.account.market.fetch(marketPda);
   console.log("ending OI:", usd(m2.longOi), "/", usd(m2.shortOi));
 
