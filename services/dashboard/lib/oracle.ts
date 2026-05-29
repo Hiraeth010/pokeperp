@@ -1,9 +1,7 @@
 "use client";
 
-import { Connection } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
 import { useEffect, useState } from "react";
-import { useConnection } from "@solana/wallet-adapter-react";
 
 import {
   constituentRegistryPda,
@@ -13,6 +11,9 @@ import {
 } from "./anchor";
 import type { Oracle } from "./idl/oracle";
 import { bytesToString } from "./format";
+
+/** Poll cadence for live oracle hooks over the HTTP RPC proxy. */
+const POLL_MS = 10_000;
 
 /* ============ Public types ============ */
 
@@ -115,28 +116,30 @@ export async function fetchConstituentRegistry(
   };
 }
 
-/** Subscribe to IndexState account changes via the Program's coder. */
+/**
+ * Poll IndexState over the HTTP RPC proxy and report changes. Replaces a WS
+ * subscription — the keyless public mainnet WS is unreliable in-browser
+ * (rate-limited / 403) and WS can't be routed through the /api/rpc proxy, so
+ * polling keeps the upstream key server-side while staying reliable.
+ */
 export function subscribeIndexState(
   program: Program<Oracle>,
   onChange: (state: IndexState | null) => void
 ): () => void {
-  const connection = program.provider.connection;
-  const pda = indexStatePda();
-  const subId = connection.onAccountChange(
-    pda,
-    (info) => {
-      try {
-        const raw = program.coder.accounts.decode("indexState", info.data);
-        onChange(decodeIndexStateRaw(raw as RawIndexState));
-      } catch (err) {
-        console.error("IndexState subscription decode failed:", err);
-        onChange(null);
-      }
-    },
-    "confirmed"
-  );
+  let cancelled = false;
+  const load = async () => {
+    try {
+      const next = await fetchIndexState(program);
+      if (!cancelled) onChange(next);
+    } catch (err) {
+      // Keep the last good value on a transient poll failure.
+      if (!cancelled) console.error("IndexState poll failed:", err);
+    }
+  };
+  const timer = setInterval(load, POLL_MS);
   return () => {
-    connection.removeAccountChangeListener(subId).catch(() => {});
+    cancelled = true;
+    clearInterval(timer);
   };
 }
 

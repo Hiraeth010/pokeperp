@@ -11,6 +11,9 @@ import {
   usePerpProgram,
 } from "./anchor";
 
+/** How often live hooks re-poll on-chain state over the HTTP RPC proxy. */
+export const RPC_POLL_MS = 10_000;
+
 /* ============ Public types ============ */
 
 export interface Market {
@@ -87,57 +90,49 @@ function bnToNum(bn: AnchorBN): number {
   return bn.toNumber?.() ?? Number(bn.toString());
 }
 
-/** Live Market state. Subscribes to account changes. */
+/** Live Market state. Polls over the HTTP RPC proxy (see POLL note below). */
 export function useMarket(): FetchState<Market> {
-  const { connection } = useConnection();
   const program = usePerpProgram();
   const [state, setState] = useState<FetchState<Market>>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
-    let subId: number | null = null;
+    const pda = marketPda();
 
-    (async () => {
+    const load = async () => {
       try {
-        const pda = marketPda();
         const raw = await program.account.market.fetchNullable(pda);
         if (cancelled) return;
-        if (!raw) {
-          setState({ status: "missing" });
-        } else {
-          setState({ status: "ready", data: decodeMarket(raw) });
-        }
-
-        subId = connection.onAccountChange(
-          pda,
-          (info) => {
-            try {
-              const decoded = program.coder.accounts.decode("market", info.data);
-              if (!cancelled) {
-                setState({ status: "ready", data: decodeMarket(decoded) });
-              }
-            } catch (err) {
-              console.error("Market subscription decode failed:", err);
-            }
-          },
-          "confirmed"
+        setState(
+          raw
+            ? { status: "ready", data: decodeMarket(raw) }
+            : { status: "missing" },
         );
       } catch (err) {
         if (cancelled) return;
-        setState({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (subId !== null) {
-        connection.removeAccountChangeListener(subId).catch(() => {});
+        // Don't clobber a previously-good value on a transient poll failure.
+        setState((prev) =>
+          prev.status === "ready"
+            ? prev
+            : {
+                status: "error",
+                error: err instanceof Error ? err.message : String(err),
+              },
+        );
       }
     };
-  }, [connection, program]);
+
+    // Poll via the same-origin /api/rpc HTTP proxy rather than a WS
+    // subscription: the keyless public mainnet WS is unreliable in-browser
+    // (rate-limited / 403), and WS can't be routed through the proxy, so polling
+    // keeps the upstream Helius key server-side while staying reliable.
+    void load();
+    const timer = setInterval(load, RPC_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [program]);
 
   return state;
 }
