@@ -529,16 +529,10 @@ pub mod perp_engine {
             (ctx.accounts.market.long_oi, new_short)
         };
 
-        // Re-check IM against FRESH margin (post-funding settlement).
-        ctx.accounts.margin_vault.reload()?;
-        let margin = ctx.accounts.margin_vault.amount;
-        let required_im = (new_abs as u128)
-            .checked_mul(ctx.accounts.market.initial_margin_bps as u128)
-            .and_then(|x| x.checked_div(10_000))
-            .ok_or(PerpError::MathOverflow)? as u64;
-        require!(margin >= required_im, PerpError::InsufficientMargin);
-
-        // ----- Mark + TWAP update -----
+        // ----- Mark price at the post-modify imbalance -----
+        // Computed before settlement so the changed notional is priced at the
+        // same mark the trader is moving the book to — mirrors open_position /
+        // close_position, which both use the post-trade mark.
         let index_state = &ctx.accounts.index_state;
         require!(
             index_state.status == IndexStatus::Provisional
@@ -555,6 +549,134 @@ pub mod perp_engine {
             ctx.accounts.market.slippage_factor,
         )?;
 
+        // ----- Price-PnL accounting on the changed notional (v0.9 fix) -----
+        // Previously modify_position changed `size` but left entry_*_price
+        // untouched and realized no PnL, so the original entry applied to the
+        // whole resized position: an INCREASE back-dated the added notional to
+        // the (stale) original entry (free PnL on close), and a DECREASE let a
+        // losing trader shed size without realizing the loss. Fix:
+        //   * increase -> size-weighted-average entry (mark + index) over the
+        //                 added notional, priced at the current mark/index. No
+        //                 realized PnL; the basis just blends.
+        //   * decrease -> realize PnL on the CLOSED notional at the current mark
+        //                 and route it through insurance exactly like
+        //                 close_position; the remainder keeps its entry.
+        let entry_mark = ctx.accounts.position.entry_mark_price;
+        require!(entry_mark > 0, PerpError::MathOverflow);
+
+        if new_abs > old_abs {
+            // INCREASE: blend entry over the added size.
+            let added = (new_abs - old_abs) as u128;
+            let oa = old_abs as u128;
+            let na = new_abs as u128;
+            let add_mark = added
+                .checked_mul(new_mark_price as u128)
+                .ok_or(PerpError::MathOverflow)?;
+            let new_entry_mark = oa
+                .checked_mul(entry_mark as u128)
+                .and_then(|x| x.checked_add(add_mark))
+                .and_then(|x| x.checked_div(na))
+                .ok_or(PerpError::MathOverflow)? as u64;
+            let old_entry_index = ctx.accounts.position.entry_index_price as u128;
+            let add_index = added
+                .checked_mul(index_price as u128)
+                .ok_or(PerpError::MathOverflow)?;
+            let new_entry_index = oa
+                .checked_mul(old_entry_index)
+                .and_then(|x| x.checked_add(add_index))
+                .and_then(|x| x.checked_div(na))
+                .ok_or(PerpError::MathOverflow)? as u64;
+            ctx.accounts.position.entry_mark_price = new_entry_mark;
+            ctx.accounts.position.entry_index_price = new_entry_index;
+        } else {
+            // DECREASE: realize PnL on the closed notional at the current mark.
+            let closed = (old_abs - new_abs) as i128;
+            let closed_signed = if is_long { closed } else { -closed };
+            let price_delta = (new_mark_price as i128) - (entry_mark as i128);
+            let realized = closed_signed
+                .checked_mul(price_delta)
+                .and_then(|x| x.checked_div(entry_mark as i128))
+                .ok_or(PerpError::MathOverflow)?;
+
+            if realized < 0 {
+                // Loss on the closed portion -> sweep margin vault into insurance.
+                let loss = (-realized) as u64;
+                require!(
+                    ctx.accounts.margin_vault.amount >= loss,
+                    PerpError::InsufficientMargin
+                );
+                token::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.margin_vault.to_account_info(),
+                            to: ctx.accounts.insurance_vault.to_account_info(),
+                            authority: ctx.accounts.position.to_account_info(),
+                        },
+                        position_signer,
+                    ),
+                    loss,
+                )?;
+                ctx.accounts.insurance_fund.total_deposited = ctx
+                    .accounts
+                    .insurance_fund
+                    .total_deposited
+                    .checked_add(loss)
+                    .ok_or(PerpError::MathOverflow)?;
+            } else if realized > 0 {
+                // Gain on the closed portion -> insurance tops up the margin vault
+                // (capped at insurance balance; emit shortfall like close_position).
+                let gain = realized as u64;
+                let actual = gain.min(ctx.accounts.insurance_vault.amount);
+                if actual > 0 {
+                    let fund_bump = ctx.accounts.insurance_fund.bump;
+                    let fund_seeds: &[&[u8]] =
+                        &[INSURANCE_FUND_SEED, std::slice::from_ref(&fund_bump)];
+                    let fund_signer: &[&[&[u8]]] = &[fund_seeds];
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.token_program.to_account_info(),
+                            Transfer {
+                                from: ctx.accounts.insurance_vault.to_account_info(),
+                                to: ctx.accounts.margin_vault.to_account_info(),
+                                authority: ctx.accounts.insurance_fund.to_account_info(),
+                            },
+                            fund_signer,
+                        ),
+                        actual,
+                    )?;
+                    ctx.accounts.insurance_fund.total_paid_out = ctx
+                        .accounts
+                        .insurance_fund
+                        .total_paid_out
+                        .checked_add(actual)
+                        .ok_or(PerpError::MathOverflow)?;
+                }
+                let shortfall = gain.saturating_sub(actual);
+                if shortfall > 0 {
+                    emit!(InsuranceShortfall {
+                        trader: ctx.accounts.trader.key(),
+                        market: ctx.accounts.market.key(),
+                        kind: 0,
+                        owed: gain,
+                        paid: actual,
+                        shortfall,
+                    });
+                }
+            }
+            // entry_mark / entry_index unchanged for the remaining notional.
+        }
+
+        // Re-check IM against FRESH margin (post-funding + post-PnL settlement).
+        ctx.accounts.margin_vault.reload()?;
+        let margin = ctx.accounts.margin_vault.amount;
+        let required_im = (new_abs as u128)
+            .checked_mul(ctx.accounts.market.initial_margin_bps as u128)
+            .and_then(|x| x.checked_div(10_000))
+            .ok_or(PerpError::MathOverflow)? as u64;
+        require!(margin >= required_im, PerpError::InsufficientMargin);
+
+        // ----- Commit market OI + TWAPs + position size -----
         let market = &mut ctx.accounts.market;
         market.long_oi = new_long_oi;
         market.short_oi = new_short_oi;
@@ -1573,6 +1695,42 @@ pub mod perp_engine {
         Ok(())
     }
 
+    /// Admin: update risk parameters individually (v0.9).
+    ///
+    /// `set_phase` only moves the market between hardcoded phase *bundles*
+    /// (e.g. Phase 2 forces 5× leverage AND a 5M OI cap AND a 250k/trader cap
+    /// together). This lets the admin tune leverage and caps à-la-carte —
+    /// e.g. raise leverage to 5× while KEEPING conservative OI/position caps
+    /// appropriate to the current insurance level. Mirrors the
+    /// `initialize_market` validations exactly. Touches only existing Market
+    /// fields — no account-layout change, no effect on phase, live OI, funding
+    /// accumulators, fees, or pause flags.
+    pub fn update_risk_params(ctx: Context<UpdateRiskParams>, params: RiskParams) -> Result<()> {
+        require!(
+            params.initial_margin_bps > params.maintenance_margin_bps,
+            PerpError::InvalidConfig
+        );
+        require!(params.maintenance_margin_bps > 0, PerpError::InvalidConfig);
+        require!(
+            params.max_oi_per_side > 0 && params.max_position_per_trader > 0,
+            PerpError::InvalidConfig
+        );
+        require!(
+            params.funding_cap_per_hour_bps > 0 && params.funding_cap_per_hour_bps < 10_000,
+            PerpError::InvalidConfig
+        );
+        require!(params.slippage_factor <= 1_000_000, PerpError::InvalidConfig);
+
+        let market = &mut ctx.accounts.market;
+        market.initial_margin_bps = params.initial_margin_bps;
+        market.maintenance_margin_bps = params.maintenance_margin_bps;
+        market.max_oi_per_side = params.max_oi_per_side;
+        market.max_position_per_trader = params.max_position_per_trader;
+        market.funding_cap_per_hour_bps = params.funding_cap_per_hour_bps;
+        market.slippage_factor = params.slippage_factor;
+        Ok(())
+    }
+
     // ============================================================
     // Two-step admin transfer (v0.8)
     // ============================================================
@@ -1758,6 +1916,18 @@ pub struct InitializeMarketParams {
     /// paid out to a deleveraged trader (v0.7). Recapitalizes insurance.
     /// 5000 = 50% retention; 0 reproduces legacy "pay full PnL" behavior.
     pub adl_haircut_bps: u16,
+}
+
+/// Args for `update_risk_params` (v0.9). Subset of risk-relevant Market fields
+/// that the admin can retune without a re-init or a whole-phase bundle.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct RiskParams {
+    pub initial_margin_bps: u16,
+    pub maintenance_margin_bps: u16,
+    pub max_oi_per_side: u64,
+    pub max_position_per_trader: u64,
+    pub funding_cap_per_hour_bps: u16,
+    pub slippage_factor: u32,
 }
 
 // ---------- Accounts contexts (stubbed; expand when implementing) ----------
@@ -2305,6 +2475,19 @@ pub struct SetPause<'info> {
 
 #[derive(Accounts)]
 pub struct SetPhase<'info> {
+    #[account(
+        mut,
+        seeds = [MARKET_SEED],
+        bump = market.bump,
+        constraint = market.admin == admin.key() @ PerpError::Unauthorized,
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateRiskParams<'info> {
     #[account(
         mut,
         seeds = [MARKET_SEED],

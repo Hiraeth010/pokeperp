@@ -1555,4 +1555,84 @@ describe("perp-engine integration", () => {
       await assertTreasuryConsistent("end-of-suite");
     });
   });
+
+  describe("update_risk_params (v0.9)", () => {
+    it("admin raises leverage to 5x while KEEPING caps + phase", async () => {
+      const before = await perp.account.market.fetch(marketPda);
+
+      await perp.methods
+        .updateRiskParams({
+          initialMarginBps: 2000, // 5x
+          maintenanceMarginBps: 1000, // 10%
+          maxOiPerSide: before.maxOiPerSide, // keep
+          maxPositionPerTrader: before.maxPositionPerTrader, // keep
+          fundingCapPerHourBps: before.fundingCapPerHourBps, // keep
+          slippageFactor: before.slippageFactor, // keep
+        })
+        .accounts({ market: marketPda, admin: provider.wallet.publicKey })
+        .rpc();
+
+      const after = await perp.account.market.fetch(marketPda);
+      expect(after.initialMarginBps).to.equal(2000);
+      expect(after.maintenanceMarginBps).to.equal(1000);
+      // Caps, funding, slippage, and phase must be untouched (this is NOT set_phase).
+      expect(after.maxOiPerSide.toString()).to.equal(before.maxOiPerSide.toString());
+      expect(after.maxPositionPerTrader.toString()).to.equal(
+        before.maxPositionPerTrader.toString()
+      );
+      expect(after.phase).to.equal(before.phase);
+    });
+
+    it("rejects initial_margin <= maintenance_margin", async () => {
+      let threw = false;
+      try {
+        await perp.methods
+          .updateRiskParams({
+            initialMarginBps: 1000,
+            maintenanceMarginBps: 1000, // equal → invalid
+            maxOiPerSide: new anchor.BN(500_000_000_000),
+            maxPositionPerTrader: new anchor.BN(50_000_000_000),
+            fundingCapPerHourBps: 10,
+            slippageFactor: 100_000,
+          })
+          .accounts({ market: marketPda, admin: provider.wallet.publicKey })
+          .rpc();
+      } catch (_e) {
+        threw = true;
+      }
+      expect(threw, "IM<=MM should revert").to.equal(true);
+    });
+
+    it("rejects a non-admin signer", async () => {
+      const stranger = Keypair.generate();
+      await provider.sendAndConfirm(
+        new anchor.web3.Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: provider.wallet.publicKey,
+            toPubkey: stranger.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        ),
+        []
+      );
+      let threw = false;
+      try {
+        await perp.methods
+          .updateRiskParams({
+            initialMarginBps: 2000,
+            maintenanceMarginBps: 1000,
+            maxOiPerSide: new anchor.BN(500_000_000_000),
+            maxPositionPerTrader: new anchor.BN(50_000_000_000),
+            fundingCapPerHourBps: 10,
+            slippageFactor: 100_000,
+          })
+          .accounts({ market: marketPda, admin: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+      } catch (_e) {
+        threw = true;
+      }
+      expect(threw, "non-admin update should revert").to.equal(true);
+    });
+  });
 });

@@ -1851,6 +1851,66 @@ export type PerpEngine = {
       "args": []
     },
     {
+      "name": "updateRiskParams",
+      "docs": [
+        "Admin: update risk parameters individually (v0.9).",
+        "",
+        "`set_phase` only moves the market between hardcoded phase *bundles*",
+        "(e.g. Phase 2 forces 5× leverage AND a 5M OI cap AND a 250k/trader cap",
+        "together). This lets the admin tune leverage and caps à-la-carte —",
+        "e.g. raise leverage to 5× while KEEPING conservative OI/position caps",
+        "appropriate to the current insurance level. Mirrors the",
+        "`initialize_market` validations exactly. Touches only existing Market",
+        "fields — no account-layout change, no effect on phase, live OI, funding",
+        "accumulators, fees, or pause flags."
+      ],
+      "discriminator": [
+        106,
+        101,
+        226,
+        66,
+        22,
+        113,
+        174,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "riskParams"
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "withdrawMargin",
       "docs": [
         "Withdraw margin (subject to IM check on post-withdrawal balance).",
@@ -2572,11 +2632,11 @@ export type PerpEngine = {
             "type": "i128"
           },
           {
-            "name": "markTwap1H",
+            "name": "markTwap1h",
             "type": "u64"
           },
           {
-            "name": "markTwap5Min",
+            "name": "markTwap5min",
             "type": "u64"
           },
           {
@@ -2670,6 +2730,42 @@ export type PerpEngine = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "riskParams",
+      "docs": [
+        "Args for `update_risk_params` (v0.9). Subset of risk-relevant Market fields",
+        "that the admin can retune without a re-init or a whole-phase bundle."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "initialMarginBps",
+            "type": "u16"
+          },
+          {
+            "name": "maintenanceMarginBps",
+            "type": "u16"
+          },
+          {
+            "name": "maxOiPerSide",
+            "type": "u64"
+          },
+          {
+            "name": "maxPositionPerTrader",
+            "type": "u64"
+          },
+          {
+            "name": "fundingCapPerHourBps",
+            "type": "u16"
+          },
+          {
+            "name": "slippageFactor",
+            "type": "u32"
           }
         ]
       }

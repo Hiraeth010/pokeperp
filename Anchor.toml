@@ -15,5 +15,10 @@ url = "https://api.apr.dev"
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
+[test]
+# This Windows box is slow to unpack genesis + boot the validator; the 5s
+# default times out ("Test validator does not look started"). Give it room.
+startup_wait = 60000
+
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
