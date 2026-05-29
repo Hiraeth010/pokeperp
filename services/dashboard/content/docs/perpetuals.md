@@ -18,13 +18,16 @@ them tethered.
 ## Margin & leverage
 
 Positions use **isolated margin** — each position has its own collateral, so a loss
-on one can't drain another. Leverage is phased in:
+on one can't drain another. Current risk parameters:
 
-| Phase | Max leverage | Per-trader cap | Notes |
-|---|---|---|---|
-| 0 (shadow) | — | — | index runs, no trading |
-| 1 (soft launch) | 3× | 50k USDC | initial maintenance margin 16.5% |
-| 2 (full) | 5× | 250k USDC | larger caps |
+| Setting | Current |
+|---|---|
+| Max leverage | **5×** |
+| Maintenance margin | 10% |
+| Per-trader cap | 50k USDC |
+| Open interest cap | 500k USDC per side |
+
+Leverage and caps scale up as the insurance fund grows.
 
 A small **taker fee** (0.1%) is charged on open and close.
 

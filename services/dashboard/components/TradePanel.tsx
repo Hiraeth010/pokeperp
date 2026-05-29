@@ -98,7 +98,7 @@ export default function TradePanel() {
         <input
           type="range"
           min={1}
-          max={3}
+          max={5}
           step={0.1}
           value={leverage}
           onChange={(e) => setLeverage(parseFloat(e.target.value))}
@@ -106,8 +106,8 @@ export default function TradePanel() {
         />
         <div className="flex justify-between text-[10px] text-[rgb(var(--muted))] mt-1.5 tabular">
           <span>1.0×</span>
-          <span>2.0×</span>
           <span>3.0×</span>
+          <span>5.0×</span>
         </div>
       </div>
 
