@@ -119,47 +119,52 @@ const CARD_NAMES: Record<string, string> = {
   // Shining Fates Shiny Vault (swsh45sv) — naive URL doesn't resolve (SV-prefixed)
   "SF-107-RR": "Charizard VMAX (Shiny Vault)",
 
-  // ===== PMT26-50 (v0.10 expansion) =====
+  // ===== PMT26-50 (v0.10 expansion, post-2026-05-30 catalog fix) =====
   // Silver Tempest — Lugia VSTAR Alt Art (distinct from ST-186 Lugia V)
   "ST-211-AA":  "Lugia VSTAR",
-  // Pokemon 151 SIR
-  "PMK-193-SIR": "Pikachu ex (151)",
+  // Pokemon 151 — Pikachu IR + 4 SIR ex cards.  Originally listed as
+  // "Pikachu ex SIR 151" but that card doesn't exist; pointing to the
+  // famous Pikachu Illustration Rare (sv3pt5-173) instead.
+  "PMK-173-SIR": "Pikachu (151)",
   "PMK-200-SIR": "Blastoise ex (151)",
   "PMK-198-SIR": "Venusaur ex (151)",
   "PMK-201-SIR": "Alakazam ex (151)",
-  "PMK-205-SIR": "Mew ex (151)",
-  // Lost Origin — Giratina VSTAR Alt Art
-  "LO-213-AA":  "Giratina VSTAR",
+  "PMK-193-SIR": "Mew ex (151)",
+  // Lost Origin — Giratina VSTAR Alt Art (#212 — #213 is Hisuian Zoroark)
+  "LO-212-AA":  "Giratina VSTAR",
   // Surging Sparks — Pikachu ex SIR
   "SS-238-SIR": "Pikachu ex (Surging Sparks)",
-  // Celebrations — Pikachu V-UNION
+  // Celebrations — Pikachu V-UNION (V-UNION cards only exist as swshp
+  // promos in pokemontcg.io; left at cel25-25 placeholder for now)
   "CEL-25-UN":  "Pikachu V-UNION",
-  // Crown Zenith Galarian Gallery (additional GG chase cards beyond GG56)
+  // Crown Zenith Galarian Gallery — these 4 Pokemon don't actually have
+  // GG variants in swsh12pt5gg; awaiting substitution by user
   "CZ-29-GG":   "Charizard VSTAR (GG)",
   "CZ-44-GG":   "Pikachu VMAX (GG)",
   "CZ-50-GG":   "Rayquaza VMAX (GG)",
   "CZ-51-GG":   "Zacian V (GG)",
-  // Astral Radiance alt arts
-  "AR-211-AA":  "Origin Forme Palkia VSTAR",
-  "AR-209-AA":  "Origin Forme Dialga VSTAR",
-  "AR-205-AA":  "Hisuian Goodra V",
+  // Astral Radiance alt arts (208 = Palkia, 210 = Dialga)
+  "AR-208-AA":  "Origin Forme Palkia VSTAR",
+  "AR-210-AA":  "Origin Forme Dialga VSTAR",
+  // Hisuian Goodra V alt art lives in Lost Origin (swsh11-187), not AR
+  "LO-187-AA":  "Hisuian Goodra V",
   // Brilliant Stars — Arceus VSTAR Alt Art
   "BS-184-AA":  "Arceus VSTAR",
-  // Stellar Crown — Lance's Charizard ex SAR
+  // Stellar Crown — Lance's Charizard ex SAR (not yet in pokemontcg.io)
   "SC-232-SAR": "Lance's Charizard ex",
   // Pokemon GO
   "PGO-11-RR":  "Radiant Charizard",
   "PGO-86-AA":  "Mewtwo VSTAR",
-  // Paldean Fates — Penny SAR
-  "PaF-91-SAR": "Penny",
-  // Twilight Masquerade — Hydreigon ex SIR
-  "TM-167-SIR": "Hydreigon ex",
-  // Paradox Rift — Mela SAR
-  "PR-191-SAR": "Mela",
-  // Paldea Evolved — Boss's Orders SAR
-  "PaE-270-SAR": "Boss's Orders",
-  // Obsidian Flames — Tyranitar ex SIR
-  "OF-226-SIR": "Tyranitar ex",
+  // Paldean Fates — Penny SAR (#239)
+  "PaF-239-SAR": "Penny",
+  // Hydreigon ex SIR is in Surging Sparks (sv8-240), not Twilight Masquerade
+  "SS-240-SIR": "Hydreigon ex",
+  // Paradox Rift — Mela SAR (#254)
+  "PR-254-SAR": "Mela",
+  // Paldea Evolved — Boss's Orders (Ghetsis) SIR (#265)
+  "PaE-265-SAR": "Boss's Orders (Ghetsis)",
+  // Obsidian Flames — Tyranitar ex Ultra Rare alt-art (no SIR variant exists)
+  "OF-211-AA": "Tyranitar ex",
 };
 
 export interface CardIdentity {
