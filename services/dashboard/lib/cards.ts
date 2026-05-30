@@ -134,15 +134,18 @@ const CARD_NAMES: Record<string, string> = {
   "LO-212-AA":  "Giratina VSTAR",
   // Surging Sparks — Pikachu ex SIR
   "SS-238-SIR": "Pikachu ex (Surging Sparks)",
-  // Celebrations — Pikachu V-UNION (V-UNION cards only exist as swshp
-  // promos in pokemontcg.io; left at cel25-25 placeholder for now)
-  "CEL-25-UN":  "Pikachu V-UNION",
-  // Crown Zenith Galarian Gallery — these 4 Pokemon don't actually have
-  // GG variants in swsh12pt5gg; awaiting substitution by user
-  "CZ-29-GG":   "Charizard VSTAR (GG)",
-  "CZ-44-GG":   "Pikachu VMAX (GG)",
-  "CZ-50-GG":   "Rayquaza VMAX (GG)",
-  "CZ-51-GG":   "Zacian V (GG)",
+  // Twilight Masquerade — Bloodmoon Ursaluna ex SIR (substituted for the
+  // originally-listed Pikachu V-UNION, which only exists as swshp promos)
+  "TM-216-SIR": "Bloodmoon Ursaluna ex",
+  // Crown Zenith Galarian Gallery — the 4 real CZ-GG chase cards we use
+  // (substituted for non-existent Charizard VSTAR / Pikachu VMAX / Rayquaza
+  // VMAX / Zacian V "GG" variants we originally listed but that don't exist
+  // in swsh12pt5gg)
+  "CZ-44-GG":   "Mewtwo VSTAR (CZ)",
+  "CZ-50-GG":   "Darkrai VSTAR",
+  "CZ-51-GG":   "Hisuian Samurott V",
+  // Twilight Masquerade — Greninja ex SIR
+  "TM-214-SIR": "Greninja ex",
   // Astral Radiance alt arts (208 = Palkia, 210 = Dialga)
   "AR-208-AA":  "Origin Forme Palkia VSTAR",
   "AR-210-AA":  "Origin Forme Dialga VSTAR",
@@ -150,8 +153,9 @@ const CARD_NAMES: Record<string, string> = {
   "LO-187-AA":  "Hisuian Goodra V",
   // Brilliant Stars — Arceus VSTAR Alt Art
   "BS-184-AA":  "Arceus VSTAR",
-  // Stellar Crown — Lance's Charizard ex SAR (not yet in pokemontcg.io)
-  "SC-232-SAR": "Lance's Charizard ex",
+  // Stellar Crown — Terapagos ex SIR (substituted for Lance's Charizard ex,
+  // which isn't yet in pokemontcg.io's catalog)
+  "SC-170-SIR": "Terapagos ex",
   // Pokemon GO
   "PGO-11-RR":  "Radiant Charizard",
   "PGO-86-AA":  "Mewtwo VSTAR",
