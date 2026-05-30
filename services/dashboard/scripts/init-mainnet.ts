@@ -135,9 +135,17 @@ async function main(): Promise<void> {
       .rpc()
   );
 
-  // 3. Seed all 25 PMT25 constituents (inception list; base_price is the
-  // stale-decay fallback — live prices come from the publisher crank).
-  console.log("\n[3] Seeding 25 PMT25 constituents...");
+  // 3. Seed PMT constituents (inception list; base_price is the stale-decay
+  // fallback — live prices come from the publisher crank).
+  //
+  // NOTE (v0.10): this script only seeds the original 25 inception entries
+  // and is preserved as the historical fresh-deploy path.  Existing mainnet
+  // deployment is upgraded in-place via `expand-to-50.ts` (admin one-shot
+  // realloc + 25× `update_constituent` for PMT26-50 + `finalize_registry_update`),
+  // which preserves the populated PMT1-25 slots.  Re-running init-mainnet
+  // against the live program would fail at `initialize_registry` (account
+  // already exists).
+  console.log("\n[3] Seeding 25 PMT inception constituents...");
   const seeds: Array<{
     name: string;
     set: string;

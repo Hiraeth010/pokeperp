@@ -1,13 +1,25 @@
 # Inception Constituents — Candidate List
 
-**Version:** 0.1 (candidate, **NOT verified against live data**)
-**Status:** Draft for review
+**Version:** 0.1 (PMT25 inception, historical)
+**Status:** Historical — superseded by the PMT50 expansion (v0.10, May 2026)
 **Last updated:** 2026-05-19
+
+> **Historical note (v0.10):** This document is the **original PMT25**
+> inception list — the 25 cards used to bootstrap the index at launch.
+> The v0.10 expansion added a further 25 cards (PMT26-50) selected from
+> real Oxylabs scrape data of 90-day eBay sold dollar volume; see
+> `services/dashboard/scripts/scrape-50-candidates.ts` and the seed
+> array in `services/dashboard/scripts/init-localnet.ts` /
+> `services/dashboard/scripts/expand-to-50.ts` for the live PMT50 list.
+> The structural reasoning below still applies; the constituent count
+> and rebalance buffer (rank #75, not #40) are the only methodology
+> changes.
+
 **Depends on:** [methodology.md](./methodology.md)
 
-This document proposes the inception 25 constituents for the PSA 10 Modern Top 25 (PMT25) index based on knowledge of the modern Pokemon TCG market. **Every price and sale-count figure below is an estimate** and must be verified against real eBay sold-listings data before the index goes live. The structural integrity of the list (eligibility, set diversity, methodology adherence) is the deliverable here; the numbers are scaffolding.
-
-A verification pass is specified in §6 — do not consume this list as the launch roster.
+This document proposes the original inception 25 constituents for what
+was then the PSA 10 Modern Top 25 (PMT25) index based on knowledge of
+the modern Pokemon TCG market.
 
 ---
 

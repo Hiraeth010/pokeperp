@@ -107,7 +107,7 @@ solana program deploy \
   --keypair ~/.config/solana/id.json --url http://127.0.0.1:8899 \
   --program-id target/deploy/perp_engine-keypair.json target/deploy/perp_engine.so
 
-# 3. Initialize on-chain state (Config, Registry + 25 PMT25 constituents, InsuranceFund, Market)
+# 3. Initialize on-chain state (Config, Registry + 50 PMT50 constituents, InsuranceFund, Market)
 cd services/dashboard
 npx tsx scripts/init-localnet.ts
 

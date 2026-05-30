@@ -150,7 +150,8 @@ async function main(): Promise<void> {
       .rpc()
   );
 
-  // 5. Seed all 25 PMT25 constituents from the inception candidate list
+  // 5. Seed all 50 PMT50 constituents (PMT1-25 inception list +
+  //    PMT26-50 v0.10 expansion)
   // (docs/inception-candidates.md). Verified prices use the 2026-05-19 multi-source
   // pass numbers; estimates are best-effort and clearly priced lower than verified
   // peers. Slots 23-24 use cards from sets whose pokemontcg.io URL pattern doesn't

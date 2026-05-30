@@ -17,7 +17,7 @@
 //!     https://card-codex.com/pokemon/{era}/{set}/{card-slug}-{number}-{rarity-slug}/
 //!
 //! Per-card mapping is required because card-slug isn't derivable from
-//! (set_code, collector_number) alone. The PMT25_URLS table below maps
+//! (set_code, collector_number) alone. The `CARD_CODEX_URLS` table below maps
 //! `(set_code, collector_number, variant_code)` → the trailing URL segments.
 //! New cards must be added here before they can be fetched.
 //!
@@ -75,7 +75,7 @@ impl CardCodexSource {
     /// the known mapping — caller should treat as "not available", not an error.
     pub fn url_for(&self, c: &ConstituentQuery) -> Option<String> {
         let key = (c.set_code.as_str(), c.collector_number, c.variant_code.as_str());
-        let entry = PMT25_URLS.get(&key)?;
+        let entry = CARD_CODEX_URLS.get(&key)?;
         Some(format!(
             "{}/pokemon/{}/{}/{}-{}-{}/",
             self.base_url,
@@ -144,7 +144,7 @@ fn dollars_string_to_micro(s: &str) -> Option<u64> {
     Some((dollars * 1_000_000.0).round() as u64)
 }
 
-/// Card-Codex's pricing block. Tested against several PMT25 card pages
+/// Card-Codex's pricing block. Tested against several PMT card pages
 /// captured 2026-05-19. Catches:
 ///   PSA 10: $1,234
 ///   PSA 10 — $1,234.56
@@ -177,7 +177,7 @@ struct UrlEntry {
 ///   - `rare-ultra`:   V alt arts
 ///   - `special-illustration-rare`: SIR / SAR
 ///   - `trainer-gallery-rare-holo`: Trainer Gallery cards
-static PMT25_URLS: LazyLock<HashMap<(&'static str, u16, &'static str), UrlEntry>> =
+static CARD_CODEX_URLS: LazyLock<HashMap<(&'static str, u16, &'static str), UrlEntry>> =
     LazyLock::new(|| {
         let mut m = HashMap::new();
         // Evolving Skies (sword-shield/evolving-skies)

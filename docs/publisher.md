@@ -375,7 +375,7 @@ Threats and mitigations:
 ## 12. Open questions for v0.2
 
 - **Multi-source aggregation strategy**: when a publisher uses both eBay Browse + PriceCharting, should they combine before trim, or compute per-source and take median? Lean toward combine-before-trim — more samples = tighter trimmed mean.
-- **eBay rate limiting**: Browse API allows ~5,000 calls/day under the basic tier. With 25 constituents × 4 sources × 7-day pages, a publisher could blow through this. Need caching + day-incremental fetching.
+- **eBay rate limiting**: Browse API allows ~5,000 calls/day under the basic tier. With 50 constituents × 4 sources × 7-day pages, a publisher could blow through this. Need caching + day-incremental fetching.
 - **Listing deduplication across sources**: if PriceCharting scrapes eBay, the publisher might double-count the same sale. Dedup by `(listing_id, sold_at)` tuple before trim.
 - **Source-of-truth for buyer/seller hashes**: blacklist requires hashed identifiers. eBay obfuscates buyer IDs publicly. Need a strategy for stable buyer-ID hashing.
 - **Failover between publishers**: if a publisher misses submission, does another publisher trigger a "stand-in" submission, or is the system tolerant of one missing submission (since 3-of-5 is the floor)? Current design: tolerant (no stand-in), but consider mutual-monitoring publishers.

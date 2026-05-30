@@ -5,7 +5,7 @@
 **Last updated:** 2026-05-19
 **Depends on:** [methodology.md](./methodology.md), [oracle.md](./oracle.md), [perp-engine.md](./perp-engine.md)
 
-The trader dashboard is the user-facing web application for the Pokeperp perp DEX. It surfaces the live PMT25 index value, the 25 constituent prices, the perp market state, and the trade / margin / liquidation flows.
+The trader dashboard is the user-facing web application for the Pokeperp perp DEX. It surfaces the live PMT50 index value, the 50 constituent prices, the perp market state, and the trade / margin / liquidation flows.
 
 This document specifies pages, read and write data flows, key UI decisions, and the open questions a real implementation must answer.
 
@@ -24,7 +24,7 @@ This document specifies pages, read and write data flows, key UI decisions, and 
 | Path | Purpose | Read sources |
 |---|---|---|
 | `/` | Index overview: current value, 24h/7d/30d sparkline, constituent contribution preview | `IndexState`, recent `IndexState` history |
-| `/index` | Full 25-constituent breakdown: per-card price, 24h change, sample count, source attribution | `IndexState`, `ConstituentRegistry` |
+| `/index` | Full 50-constituent breakdown: per-card price, 24h change, sample count, source attribution | `IndexState`, `ConstituentRegistry` |
 | `/trade` | Open / modify / close perp positions | `Market`, `Position` (caller), `IndexState` |
 | `/portfolio` | Caller's open positions, realized PnL, funding history | `Position` (all for caller), funding event logs |
 | `/oracle` | Publisher submissions for today, per-publisher deviations, open challenges | `PriceUpdate` (all for current day), `Challenge` accounts |
@@ -72,7 +72,7 @@ trader click  ─▶  build tx (anchor-ts)  ─▶  wallet adapter sign  ─▶ 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  PMT25                                                       1,124.7 │
+│  PMT50                                                       1,124.7 │
 │  +2.3% (24h)                                                          │
 │                                                                      │
 │  [────── 24h sparkline ──────────────────────────────────────────]   │

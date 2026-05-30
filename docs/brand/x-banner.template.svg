@@ -4,11 +4,11 @@
   from the engraved Pokeball mark.  Composition is biased to the right two-
   thirds so the bottom-left avatar overlay on X doesn't cover the hero.
 
-  TEMPLATE: contains placeholders for three PMT25 card images (Rayquaza VMAX,
+  TEMPLATE: contains placeholders for three PMT50 hero card images (Rayquaza VMAX,
   Giratina V, Charizard ex). Run build-banner.ps1 to substitute real card photos
   from card-src/ and produce the final x-banner.svg.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" role="img" aria-label="Pokeperp — perp DEX trading against the PSA 10 Modern Top 25">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" role="img" aria-label="Pokeperp — perp DEX trading against the PSA 10 Modern Top 50">
   <title>Pokeperp X banner</title>
   <defs>
     <!-- ===== Background ===== -->

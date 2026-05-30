@@ -3,7 +3,7 @@
 import { useIndexState } from "@/lib/oracle";
 import { formatIndex } from "@/lib/format";
 
-/** Slim PMT25 bar for /trade — keeps the chart and trade panel above the fold
+/** Slim PMT50 bar for /trade — keeps the chart and trade panel above the fold
  *  while still showing the load-bearing index value and oracle status. */
 export default function TradeIndexBar() {
   const state = useIndexState();

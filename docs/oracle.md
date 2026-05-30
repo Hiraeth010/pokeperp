@@ -47,7 +47,7 @@ Non-goals for v1: full permissionlessness, cryptoeconomic security competitive w
 
 ## 3. Data sourcing (publisher-side, off-chain)
 
-Each publisher independently fetches eBay PSA 10 sold listings for the 25 constituents and computes per-constituent trimmed-mean prices per methodology §6.
+Each publisher independently fetches eBay PSA 10 sold listings for the 50 constituents and computes per-constituent trimmed-mean prices per methodology §6.
 
 ### Recommended source paths (publisher's choice)
 
@@ -87,8 +87,8 @@ Publishers post a `PriceUpdate` account containing:
 struct PriceUpdate {
     publisher: Pubkey,           // signed by this key
     day: u32,                    // unix day number being priced
-    prices: [u64; 25],           // micro-USDC per card, fixed order matches constituent registry
-    sale_counts: [u16; 25],      // number of sales used in trimmed mean
+    prices: [u64; 50],           // micro-USDC per card, fixed order matches constituent registry (PMT50, v0.10)
+    sale_counts: [u16; 50],      // number of sales used in trimmed mean
     source_root: [u8; 32],       // merkle root of (sale_id, price, timestamp) leaves, off-chain reproducible
     submitted_at: i64,           // slot timestamp
     signature: [u8; 64],
@@ -103,7 +103,7 @@ struct PriceUpdate {
 
 ### Per-constituent aggregation
 
-For each of the 25 constituents on day `T-1`:
+For each of the 50 constituents on day `T-1`:
 
 1. Collect all valid `PriceUpdate` accounts for day `T-1`.
 2. Filter to publishers in good standing (not slashed, not in shadow period for this submission).
@@ -114,7 +114,7 @@ Median (not mean) because it tolerates one manipulated submission out of five wi
 
 ### Index value computation
 
-Once all 25 constituent prices are aggregated:
+Once all 50 constituent prices are aggregated:
 
 ```
 I_{T-1} = 1000 × (1/25) × Σ (P_i / P_{i,base})

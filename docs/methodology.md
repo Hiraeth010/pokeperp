@@ -1,17 +1,22 @@
-# PSA 10 Modern Top 25 Index — Methodology
+# PSA 10 Modern Top 50 Index — Methodology
 
-**Version:** 0.2
-**Status:** Draft
-**Last updated:** 2026-05-19
+**Version:** 0.10 (PMT50 expansion)
+**Status:** Live (devnet validated, mainnet cutover pending)
+**Last updated:** 2026-05-30
 
-The Pokeperp Modern Top 25 (PMT25) is a price index tracking the 25 most-traded PSA 10 graded Pokemon cards from the modern era. It is the settlement reference for the Pokeperp perpetual futures market.
+The Pokeperp Modern Top 50 (PMT50) is a price index tracking the 50 most-traded PSA 10 graded Pokemon cards from the modern era. It is the settlement reference for the Pokeperp perpetual futures market.
+
+### Changes from v0.2 (PMT50)
+
+- §2 / §4 / §5: Index size expanded **25 → 50 constituents**, equal weight rescaled from 4% to **2%** per slot, soft-buffer demotion threshold raised from rank #40 to **rank #75** to keep the same ~60% headroom over the active basket.
+- New PMT26-50 constituents selected by the same trailing-90-day eBay PSA 10 sold-dollar-volume rule, validated against real Oxylabs scrape data (see `services/dashboard/scripts/scrape-50-candidates.ts`).
+- On-chain `ConstituentRegistry` and `IndexState` reallocated in-place via `expand_constituents_to_50` admin one-shot (see `programs/oracle/src/lib.rs`).
 
 ### Changes from v0.1
 
 - §1: Explicit rules added for **PSA 10 qualifier exclusion** and **English-only language**.
 - §3: Eligibility filter table extended with the language and qualifier rules.
 - §9: Edge cases significantly expanded — Pokemon Center stamps, parallel mini-set numbering (Trainer Gallery / Galarian Gallery), SAR/SIR title-matching logic, and a canonical constituent-registry matching protocol that publishers must follow.
-- §10: Resolved items removed; open questions reframed for v0.3.
 
 ---
 
@@ -20,12 +25,12 @@ The Pokeperp Modern Top 25 (PMT25) is a price index tracking the 25 most-traded 
 - **Era**: "Modern" is defined as XY era onward — any card from a Pokemon TCG set released on or after **February 1, 2014**.
 - **Grade**: PSA 10 only. CGC, BGS, SGC, and other graders' equivalents are not eligible. PSA 10 has the deepest liquidity premium and standardizing on a single grader produces a single, clean price curve per card.
 - **Qualifier labels excluded**: PSA grades that carry a qualifier label (OC = off-center, ST = staining, MK = marks, PD = print defect, MC = miscut) are excluded from price computation, even if the underlying grade is "10". A qualifier-flagged PSA 10 trades at a meaningful discount to a clean PSA 10, so blending them would distort the index. Publishers filter eBay listing titles to clean `"PSA 10"` only.
-- **Language**: English-language printings only. Japanese, Korean, Chinese, German, French, Italian, Spanish, and Portuguese printings of the same card are tracked as distinct cards and none are eligible for the PMT25 index in v1. (A companion "Japanese Modern Top 25" index is deferred to a future version.)
+- **Language**: English-language printings only. Japanese, Korean, Chinese, German, French, Italian, Spanish, and Portuguese printings of the same card are tracked as distinct cards and none are eligible for the PMT50 index in v1. (A companion "Japanese Modern Top 50" index is deferred to a future version.)
 - **Card identity**: Each constituent is a unique tuple of `(set, collector number, variant)`. Alt arts, secret rares, rainbow rares, and promo-stamped variants of the same Pokemon are treated as separate constituents. The (set, collector number, variant) tuple stored in the on-chain constituent registry is **authoritative** — see §9.8 for the matching protocol publishers must follow.
 
 ## 2. Constituent selection
 
-The 25 constituents are the cards with the highest **trailing 90-day eBay PSA 10 sold dollar volume**, where:
+The 50 constituents are the cards with the highest **trailing 90-day eBay PSA 10 sold dollar volume**, where:
 
 ```
 dollar_volume(card) = sold_count_90d × median_sold_price_90d
@@ -48,7 +53,7 @@ A card must pass **all** of the following before being eligible for inclusion:
 
 ## 4. Weighting
 
-Equal weight: **4% per constituent**. Re-equalized at every rebalance.
+Equal weight: **2% per constituent** (50 slots × 2% = 100%). Re-equalized at every rebalance.
 
 Equal weighting is chosen over market-cap weighting because cap weighting would concentrate ~60% of the index in 3-4 chase cards (Charizard alt arts, Umbreon VMAX Alt) and let a whale push the entire index by sniping one card.
 
@@ -62,11 +67,11 @@ Equal weighting is chosen over market-cap weighting because cap weighting would 
 
 Pokemon prices oscillate enough that strict rank-based replacement causes constituents to swap in/out month-over-month. To prevent this:
 
-- An existing constituent is **only removed** if it falls below **rank #40** in the trailing 90-day dollar volume ranking.
+- An existing constituent is **only removed** if it falls below **rank #75** in the trailing 90-day dollar volume ranking.
 - A non-constituent enters the index when an existing constituent drops out, taking the next-highest qualifying card by rank.
-- If multiple constituents fall below #40 in the same period, replacements are filled in dollar-volume rank order.
+- If multiple constituents fall below #75 in the same period, replacements are filled in dollar-volume rank order.
 
-This means the 25 constituents are not always the literal top 25 — they are the top 25 *with persistence*. A card that ranks #26-#39 stays in. A card that ranks #1-#25 but is currently a non-constituent does **not** force its way in; it waits for an existing member to fall to #40.
+This means the 50 constituents are not always the literal top 50 — they are the top 50 *with persistence*. A card that ranks #51-#74 stays in. A card that ranks #1-#50 but is currently a non-constituent does **not** force its way in; it waits for an existing member to fall to #75.
 
 ## 6. Per-card price (daily)
 
@@ -106,7 +111,7 @@ Inception value is 1000.
 | Vector | Defense |
 |---|---|
 | Wash trading a single card to spike index | 7-day window means ~5 days sustained shill required; 10% trim kills outlier sales |
-| Pumping a marginal card to sneak into Top 25 | Dollar-volume selection (not count) requires large capital; 90-day window dampens short-term volume bursts |
+| Pumping a marginal card to sneak into Top 50 | Dollar-volume selection (not count) requires large capital; 90-day window dampens short-term volume bursts |
 | Front-running monthly rebalance | 7-day pre-announcement is public; perp position limits (defined in perp engine spec) cap any single trader's exposure to index moves |
 | Stale data exploitation | Decay penalty on stale constituents shifts price toward 30-day mean, removing the manipulator's anchor |
 | Cross-grader arbitrage (e.g., CGC 10 pretending to be PSA 10) | PSA-only rule; oracle publishers filter listing titles for "PSA 10" |
@@ -143,7 +148,7 @@ A card with the same Pokemon and similar artwork in a later set is a different c
 
 ### 9.5 PSA grade flips
 
-Irrelevant to PMT25. Only PSA 10 sales are priced. A card cracked from a PSA 9 slab and resubmitted as a PSA 10 enters the PSA 10 supply pool but the prior grade is not tracked by the methodology.
+Irrelevant to PMT50. Only PSA 10 sales are priced. A card cracked from a PSA 9 slab and resubmitted as a PSA 10 enters the PSA 10 supply pool but the prior grade is not tracked by the methodology.
 
 ### 9.6 Card delisted by eBay or pulled by PSA
 
@@ -179,6 +184,6 @@ Remaining open:
 
 - **Companion indices**: a "Pokeperp Vintage 25" (pre-2014) and a "Japanese Modern Top 25" are both plausible second products. Both deferred until v1 mainnet is stable and the publisher set has demonstrated reliable operation for ≥6 months.
 - **Pokemon Center stamp re-aggregation**: methodology v0.2 treats stamps as separate constituents that almost always won't qualify. Should a future version aggregate stamped + unstamped under one constituent with publisher-weighted price blending? Tentative answer: no — keeps the index simpler and the secondary stamps trade at a premium that would distort the base print's price signal — but flagging for future review if stamp markets grow.
-- **Backtesting feasibility**: simulate PMT25 over the past 12–24 months from historical eBay sold-listings data to validate that the index produces sensible behavior across past market regimes. The hard part is sourcing historical eBay data — Marketplace Insights API has limited lookback, and scraping retroactively is unreliable.
-- **Sub-index slicing**: should the index expose subsidiary indices (e.g., "PMT25 Eeveelution sub-index", "PMT25 Charizard sub-index") that traders can take separate perp exposure on? Adds product complexity; defer until v1 has shown organic demand for differentiated exposure.
-- **Variant-level granularity for Charizard**: Charizard appears in many constituents (Brilliant Stars V AA, Brilliant Stars VSTAR Rainbow, Lost Origin Trainer Gallery, Pokemon 151 SIR, Obsidian Flames SIR, Champion's Path VMAX Rainbow, etc.). Should there be an explicit cap on the number of same-Pokemon constituents to avoid Pokemon-level concentration? Not in v1 — equal weighting and a 25-card limit already cap any single Pokemon at 25% — but worth revisiting if a future verified ranking shows Charizard exceeding 35-40% of constituents.
+- **Backtesting feasibility**: simulate PMT50 over the past 12–24 months from historical eBay sold-listings data to validate that the index produces sensible behavior across past market regimes. The hard part is sourcing historical eBay data — Marketplace Insights API has limited lookback, and scraping retroactively is unreliable.
+- **Sub-index slicing**: should the index expose subsidiary indices (e.g., "PMT50 Eeveelution sub-index", "PMT50 Charizard sub-index") that traders can take separate perp exposure on? Adds product complexity; defer until v1 has shown organic demand for differentiated exposure.
+- **Variant-level granularity for Charizard**: Charizard appears in many constituents (Brilliant Stars V AA, Brilliant Stars VSTAR Rainbow, Lost Origin Trainer Gallery, Pokemon 151 SIR, Obsidian Flames SIR, Champion's Path VMAX Rainbow, etc.). Should there be an explicit cap on the number of same-Pokemon constituents to avoid Pokemon-level concentration? Not in v1 — equal weighting and a 50-card limit already cap any single Pokemon at 14% (7/50) on the current basket — but worth revisiting if a future verified ranking shows Charizard exceeding 25% of constituents.

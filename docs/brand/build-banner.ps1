@@ -1,6 +1,6 @@
 # build-banner.ps1
 #
-# Embeds the three PMT25 card photos into x-banner.svg as base64 data URIs.
+# Embeds the three PMT50 hero card photos into x-banner.svg as base64 data URIs.
 # x-banner.svg contains placeholder href values (__CARD_RAYQUAZA__ etc.) that
 # this script replaces in-place.  Run after re-pulling the card source images
 # in card-src/ to regenerate the self-contained banner.

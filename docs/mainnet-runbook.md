@@ -61,8 +61,11 @@ solana program deploy --url mainnet-beta \
 - [ ] Oracle `initialize` with the **production** Config: `submissionWindowStart/End`
       = **20:00–23:59 UTC** (not the dev full-day window), `minPublishersPerDay` ≥ 3,
       real bond/challenge-bond amounts, challenge window per spec.
-- [ ] Registry: `initialize_registry` + 25× `update_constituent` + `finalize_registry_update`
-      with the real PMT25 inception list, wired to real USDC.
+- [ ] Registry: `initialize_registry` + 50× `update_constituent` + `finalize_registry_update`
+      with the real PMT50 list, wired to real USDC.  (For a *fresh* deploy
+      after v0.10 — for the existing mainnet upgrade path, see the
+      `expand-to-50.ts` migration script that preserves the populated
+      PMT1-25 slots and only writes the new PMT26-50 entries.)
 - [ ] Perp `initialize_market` + `initialize_insurance_fund` + `initialize_treasury`,
       `usdc_mint` = real USDC, Phase-1 risk params.
 - [ ] `set_protocol_treasury` to wire the perp treasury into oracle Config.

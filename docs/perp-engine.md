@@ -5,7 +5,7 @@
 **Last updated:** 2026-05-19
 **Depends on:** [methodology.md](./methodology.md), [oracle.md](./oracle.md)
 
-The Pokeperp perp engine is the trading layer that settles perpetual futures against the PSA 10 Modern Top 25 index. This document specifies the matching mechanism, margin and leverage rules, funding rate, liquidation engine, insurance fund, and circuit breakers.
+The Pokeperp perp engine is the trading layer that settles perpetual futures against the PSA 10 Modern Top 50 index. This document specifies the matching mechanism, margin and leverage rules, funding rate, liquidation engine, insurance fund, and circuit breakers.
 
 ---
 
@@ -48,7 +48,7 @@ The Pokeperp perp engine is the trading layer that settles perpetual futures aga
                       └──────────────────┘
 ```
 
-- Single perp market: **PMT25-PERP** quoted in USDC.
+- Single perp market: **PMT50-PERP** quoted in USDC.
 - One Solana program owns the matching state, margin vaults, and liquidation flow.
 - Oracle program is a separate program; perp engine reads its `IndexState` account.
 
@@ -74,7 +74,7 @@ Parameters:
 ### Why oracle-anchored vAMM and not `x*y=k` or orderbook
 
 - **vs. `x*y=k`**: Constant-product gives implicit slippage and capital-efficiency curves that don't fit a daily-updated index. With explicit `slippage_factor × imbalance`, the protocol controls the depth directly without needing to manage virtual reserves through every oracle push.
-- **vs. orderbook**: An orderbook requires market makers from day one. The PMT25 underlying has no professional MM ecosystem — the protocol would be running an empty book. Orderbook deferred to v2 once organic flow exists.
+- **vs. orderbook**: An orderbook requires market makers from day one. The PMT50 underlying has no professional MM ecosystem — the protocol would be running an empty book. Orderbook deferred to v2 once organic flow exists.
 
 ### Trade execution
 
@@ -255,7 +255,7 @@ Extending oracle-side circuit breakers (oracle spec §9):
 ### Phase 3 (governance-gated): mature operation
 
 - Orderbook layer added on top of vAMM (Drift v2-style).
-- Cross-margin across PMT25-PERP and any future markets.
+- Cross-margin across PMT50-PERP and any future markets.
 - Limit / stop / TWAP order types.
 - Out of scope for v1 documentation.
 
