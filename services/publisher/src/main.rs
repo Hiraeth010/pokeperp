@@ -715,47 +715,83 @@ fn curated_query(set_code: &str, collector_number: u16, variant_code: &str) -> O
         // ----- Shining Fates Shiny Vault (swsh45sv) -----
         ("SF", 107, "RR") => "Pokemon Charizard VMAX Shining Fates Shiny Vault SV107 PSA 10",
 
-        // ====== PMT26-50 (v0.10 expansion) ======
-        // Silver Tempest — Lugia VSTAR Alt Art (distinct from existing Lugia V at ST-186)
+        // ====== PMT26-50 (v0.10 expansion; (set, num, variant) match the
+        //         on-chain registry as of 2026-05-30 mainnet cutover) ======
+
+        // slot 25 — Silver Tempest, Lugia VSTAR Alt Art (distinct from ST-186 Lugia V)
         ("ST", 211, "AA")  => "Pokemon Lugia VSTAR Silver Tempest 211 Alt Art PSA 10",
-        // Pokemon 151 SIR chase cards (sv3pt5) — slot 17 (Charizard SIR) already covers 199
-        ("PMK", 193, "SIR") => "Pokemon Pikachu ex 151 193 Special Illustration Rare PSA 10",
-        ("PMK", 200, "SIR") => "Pokemon Blastoise ex 151 200 Special Illustration Rare PSA 10",
-        ("PMK", 198, "SIR") => "Pokemon Venusaur ex 151 198 Special Illustration Rare PSA 10",
-        ("PMK", 201, "SIR") => "Pokemon Alakazam ex 151 201 Special Illustration Rare PSA 10",
-        ("PMK", 205, "SIR") => "Pokemon Mew ex 151 205 Special Illustration Rare PSA 10",
-        // Lost Origin — Giratina VSTAR Alt Art (distinct from existing LO-186 Giratina V)
-        ("LO", 213, "AA")  => "Pokemon Giratina VSTAR Lost Origin 213 Alt Art PSA 10",
-        // Surging Sparks — Pikachu ex SIR
+
+        // slot 26 — Pokemon 151, regular Pikachu Illustration Rare (the surfer)
+        //   Originally listed as Pikachu ex SIR but that card doesn't exist;
+        //   pointed at sv3pt5-173 which is the well-known Pikachu IR.
+        ("PMK", 173, "SIR") => "Pokemon Pikachu Pokemon 151 173 Illustration Rare PSA 10",
+
+        // slots 27-29 — Pokemon 151 SIR ex chase cards
+        ("PMK", 200, "SIR") => "Pokemon Blastoise ex Pokemon 151 200 Special Illustration Rare PSA 10",
+        ("PMK", 198, "SIR") => "Pokemon Venusaur ex Pokemon 151 198 Special Illustration Rare PSA 10",
+        ("PMK", 201, "SIR") => "Pokemon Alakazam ex Pokemon 151 201 Special Illustration Rare PSA 10",
+
+        // slot 30 — Pokemon 151, Mew ex SIR (sv3pt5-193 is the real SIR, NOT 205)
+        ("PMK", 193, "SIR") => "Pokemon Mew ex Pokemon 151 193 Special Illustration Rare PSA 10",
+
+        // slot 31 — Lost Origin, Giratina VSTAR Alt Art (swsh11-212, NOT 213)
+        ("LO", 212, "AA")  => "Pokemon Giratina VSTAR Lost Origin 212 Alt Art PSA 10",
+
+        // slot 32 — Surging Sparks, Pikachu ex SIR
         ("SS", 238, "SIR") => "Pokemon Pikachu ex Surging Sparks 238 Special Illustration Rare PSA 10",
-        // Celebrations — Pikachu V-UNION (puzzle-card; sellers usually list full V-UNION)
-        ("CEL", 25, "UN")  => "Pokemon Pikachu V-UNION Celebrations PSA 10",
-        // Crown Zenith Galarian Gallery (GG chase cards beyond GG56 Hisuian Zoroark)
-        ("CZ", 29, "GG")   => "Pokemon Charizard VSTAR Crown Zenith GG29 PSA 10",
-        ("CZ", 44, "GG")   => "Pokemon Pikachu VMAX Crown Zenith GG44 PSA 10",
-        ("CZ", 50, "GG")   => "Pokemon Rayquaza VMAX Crown Zenith GG50 PSA 10",
-        ("CZ", 51, "GG")   => "Pokemon Zacian V Crown Zenith GG51 PSA 10",
-        // Astral Radiance alt arts (slot 18 covers GG56 Hisuian Zoroark via the AR-188 override)
-        ("AR", 211, "AA")  => "Pokemon Origin Palkia VSTAR Astral Radiance 211 Alt Art PSA 10",
-        ("AR", 209, "AA")  => "Pokemon Origin Dialga VSTAR Astral Radiance 209 Alt Art PSA 10",
-        ("AR", 205, "AA")  => "Pokemon Hisuian Goodra V Astral Radiance 205 Alt Art PSA 10",
-        // Brilliant Stars — Arceus VSTAR Alt Art
+
+        // slot 33 — Twilight Masquerade, Bloodmoon Ursaluna ex SIR
+        //   (substituted for non-existent Pikachu V-UNION CEL-25-UN)
+        ("TM", 216, "SIR") => "Pokemon Bloodmoon Ursaluna ex Twilight Masquerade 216 Special Illustration Rare PSA 10",
+
+        // slots 34-36 — Crown Zenith Galarian Gallery, real chase cards
+        //   (substituted for non-existent Charizard VSTAR / Pikachu VMAX / Rayquaza VMAX GG variants)
+        ("CZ", 44, "GG")   => "Pokemon Mewtwo VSTAR Crown Zenith Galarian Gallery GG44 PSA 10",
+        ("CZ", 50, "GG")   => "Pokemon Darkrai VSTAR Crown Zenith Galarian Gallery GG50 PSA 10",
+        ("CZ", 51, "GG")   => "Pokemon Hisuian Samurott V Crown Zenith Galarian Gallery GG51 PSA 10",
+
+        // slot 37 — Twilight Masquerade, Greninja ex SIR
+        //   (substituted for non-existent Zacian V CZ-51-GG)
+        ("TM", 214, "SIR") => "Pokemon Greninja ex Twilight Masquerade 214 Special Illustration Rare PSA 10",
+
+        // slot 38 — Astral Radiance, Origin Palkia VSTAR Alt Art (swsh10-208, NOT 211)
+        ("AR", 208, "AA")  => "Pokemon Origin Forme Palkia VSTAR Astral Radiance 208 Alt Art PSA 10",
+
+        // slot 39 — Astral Radiance, Origin Dialga VSTAR Alt Art (swsh10-210, NOT 209)
+        ("AR", 210, "AA")  => "Pokemon Origin Forme Dialga VSTAR Astral Radiance 210 Alt Art PSA 10",
+
+        // slot 40 — Hisuian Goodra V is actually in Lost Origin (swsh11-187), NOT Astral Radiance.
+        //   Note: on-chain set_code moved from "AR" to "LO" here.
+        ("LO", 187, "AA")  => "Pokemon Hisuian Goodra V Lost Origin 187 Alt Art PSA 10",
+
+        // slot 41 — Brilliant Stars, Arceus VSTAR Alt Art
         ("BS", 184, "AA")  => "Pokemon Arceus VSTAR Brilliant Stars 184 Alt Art PSA 10",
-        // Stellar Crown — Lance's Charizard ex SAR
-        ("SC", 232, "SAR") => "Pokemon Lance's Charizard ex Stellar Crown 232 Special Art Rare PSA 10",
-        // Pokemon GO
-        ("PGO", 11, "RR")  => "Pokemon Radiant Charizard Pokemon GO 11 PSA 10",
+
+        // slot 42 — Stellar Crown, Terapagos ex SIR
+        //   (substituted for Lance's Charizard ex SAR — newer card not yet indexed)
+        ("SC", 170, "SIR") => "Pokemon Terapagos ex Stellar Crown 170 Special Illustration Rare PSA 10",
+
+        // slots 43-44 — Pokemon GO
+        ("PGO", 11, "RR")  => "Pokemon Radiant Charizard Pokemon GO 11 Radiant Rare PSA 10",
         ("PGO", 86, "AA")  => "Pokemon Mewtwo VSTAR Pokemon GO 86 Alt Art PSA 10",
-        // Paldean Fates — Penny SAR
-        ("PaF", 91, "SAR") => "Pokemon Penny Paldean Fates 91 Special Art Rare PSA 10",
-        // Twilight Masquerade — Hydreigon ex SIR
-        ("TM", 167, "SIR") => "Pokemon Hydreigon ex Twilight Masquerade 167 Special Illustration Rare PSA 10",
-        // Paradox Rift — Mela SAR
-        ("PR", 191, "SAR") => "Pokemon Mela Paradox Rift 191 Special Art Rare PSA 10",
-        // Paldea Evolved — Boss's Orders SAR
-        ("PaE", 270, "SAR") => "Pokemon Boss's Orders Paldea Evolved 270 Special Art Rare PSA 10",
-        // Obsidian Flames — Tyranitar ex SIR
-        ("OF", 226, "SIR") => "Pokemon Tyranitar ex Obsidian Flames 226 Special Illustration Rare PSA 10",
+
+        // slot 45 — Paldean Fates, Penny SAR (sv4pt5-239, NOT 91)
+        ("PaF", 239, "SAR") => "Pokemon Penny Paldean Fates 239 Special Art Rare PSA 10",
+
+        // slot 46 — Hydreigon ex SIR is actually in Surging Sparks (sv8-240), NOT Twilight Masquerade
+        ("SS", 240, "SIR") => "Pokemon Hydreigon ex Surging Sparks 240 Special Illustration Rare PSA 10",
+
+        // slot 47 — Paradox Rift, Mela SAR (sv4-254, NOT 191)
+        ("PR", 254, "SAR") => "Pokemon Mela Paradox Rift 254 Special Art Rare PSA 10",
+
+        // slot 48 — Paldea Evolved, Boss's Orders (Ghetsis) SIR (sv2-265, NOT 270)
+        //   Note: card is officially "Boss's Orders (Ghetsis)" — sellers list it
+        //   under both spellings; the query matches either via "Boss's Orders".
+        ("PaE", 265, "SAR") => "Pokemon Boss's Orders Ghetsis Paldea Evolved 265 Special Illustration Rare PSA 10",
+
+        // slot 49 — Obsidian Flames, Tyranitar ex Alt Art (no SIR variant exists; sv3-211 Ultra Rare = the AA)
+        //   Note: variant moved from "SIR" to "AA" on-chain.
+        ("OF", 211, "AA")  => "Pokemon Tyranitar ex Obsidian Flames 211 Alt Art PSA 10",
 
         _ => return None,
     };

@@ -295,23 +295,25 @@ static CARD_CODEX_URLS: LazyLock<HashMap<(&'static str, u16, &'static str), UrlE
         // numbering doesn't align with Card-Codex's standard collector_number
         // URL convention. v0.4 follow-up.
 
-        // ===================== PMT26-50 (v0.10 expansion) =====================
-        // Card-Codex URLs below are best-guess from the same slug conventions
-        // as PMT1-25. Where a URL returns 404 in production, the publisher
-        // falls through to eBay listings, then stale-decay — losing Card-Codex
-        // for that one card is non-fatal. Validate + correct as needed once
-        // we see real fetch outcomes in publisher logs post-mainnet-cutover.
+        // ===================== PMT26-50 (v0.10, mainnet-aligned) =====================
+        // Keys match the on-chain registry as of 2026-05-30 mainnet cutover.
+        // Card-Codex URLs are best-guess slug patterns; 404s fall through to
+        // eBay listings → stale-decay, so a wrong URL only loses Card-Codex
+        // for that one card (non-fatal).
 
-        // Silver Tempest — Lugia VSTAR Alt Art
+        // slot 25 — Lugia VSTAR (Silver Tempest, alt art)
         m.insert(
             ("ST", 211, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "silver-tempest", card_slug: "lugia-vstar", rarity_slug: "rare-ultra" },
         );
-        // Pokemon 151 SIR (sv3pt5)
+
+        // slot 26 — Pikachu IR (Pokemon 151) — the surfer; SIR variant doesn't exist for Pikachu in 151
         m.insert(
-            ("PMK", 193, "SIR"),
-            UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "pikachu-ex",   rarity_slug: "special-illustration-rare" },
+            ("PMK", 173, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "pikachu", rarity_slug: "illustration-rare" },
         );
+
+        // slots 27-29 — Pokemon 151 SIR ex chase cards
         m.insert(
             ("PMK", 200, "SIR"),
             UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "blastoise-ex", rarity_slug: "special-illustration-rare" },
@@ -324,66 +326,80 @@ static CARD_CODEX_URLS: LazyLock<HashMap<(&'static str, u16, &'static str), UrlE
             ("PMK", 201, "SIR"),
             UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "alakazam-ex",  rarity_slug: "special-illustration-rare" },
         );
+
+        // slot 30 — Mew ex SIR (sv3pt5-193 is the real SIR, NOT 205)
         m.insert(
-            ("PMK", 205, "SIR"),
-            UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "mew-ex",       rarity_slug: "special-illustration-rare" },
+            ("PMK", 193, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "pokemon-151", card_slug: "mew-ex", rarity_slug: "special-illustration-rare" },
         );
-        // Lost Origin — Giratina VSTAR
+
+        // slot 31 — Giratina VSTAR (Lost Origin alt art; swsh11-212, NOT 213)
         m.insert(
-            ("LO", 213, "AA"),
+            ("LO", 212, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "lost-origin", card_slug: "giratina-vstar", rarity_slug: "rare-ultra" },
         );
-        // Surging Sparks — Pikachu ex SIR
+
+        // slot 32 — Pikachu ex SIR (Surging Sparks)
         m.insert(
             ("SS", 238, "SIR"),
             UrlEntry { era: "scarlet-violet", set_slug: "surging-sparks", card_slug: "pikachu-ex", rarity_slug: "special-illustration-rare" },
         );
-        // Celebrations — Pikachu V-UNION (Card-Codex uses a single page for the V-UNION puzzle)
+
+        // slot 33 — Bloodmoon Ursaluna ex SIR (Twilight Masquerade)
         m.insert(
-            ("CEL", 25, "UN"),
-            UrlEntry { era: "sword-shield", set_slug: "celebrations", card_slug: "pikachu-v-union", rarity_slug: "rare-ultra" },
+            ("TM", 216, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "twilight-masquerade", card_slug: "bloodmoon-ursaluna-ex", rarity_slug: "special-illustration-rare" },
         );
-        // Crown Zenith Galarian Gallery — best-guess slug conventions
-        m.insert(
-            ("CZ", 29, "GG"),
-            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "charizard-vstar", rarity_slug: "rare-ultra" },
-        );
+
+        // slots 34-36 — Crown Zenith Galarian Gallery, real chase cards
         m.insert(
             ("CZ", 44, "GG"),
-            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "pikachu-vmax",    rarity_slug: "rare-ultra" },
+            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "mewtwo-vstar",   rarity_slug: "rare-ultra" },
         );
         m.insert(
             ("CZ", 50, "GG"),
-            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "rayquaza-vmax",   rarity_slug: "rare-ultra" },
+            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "darkrai-vstar",  rarity_slug: "rare-ultra" },
         );
         m.insert(
             ("CZ", 51, "GG"),
-            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "zacian-v",        rarity_slug: "rare-ultra" },
+            UrlEntry { era: "sword-shield", set_slug: "crown-zenith-galarian-gallery", card_slug: "hisuian-samurott-v", rarity_slug: "rare-ultra" },
         );
-        // Astral Radiance alt arts
+
+        // slot 37 — Greninja ex SIR (Twilight Masquerade)
         m.insert(
-            ("AR", 211, "AA"),
+            ("TM", 214, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "twilight-masquerade", card_slug: "greninja-ex", rarity_slug: "special-illustration-rare" },
+        );
+
+        // slots 38-39 — Astral Radiance alt arts (swsh10-208 = Palkia, 210 = Dialga)
+        m.insert(
+            ("AR", 208, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "astral-radiance", card_slug: "origin-forme-palkia-vstar", rarity_slug: "rare-ultra" },
         );
         m.insert(
-            ("AR", 209, "AA"),
+            ("AR", 210, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "astral-radiance", card_slug: "origin-forme-dialga-vstar", rarity_slug: "rare-ultra" },
         );
+
+        // slot 40 — Hisuian Goodra V is in Lost Origin (swsh11-187), NOT Astral Radiance
         m.insert(
-            ("AR", 205, "AA"),
-            UrlEntry { era: "sword-shield", set_slug: "astral-radiance", card_slug: "hisuian-goodra-v",          rarity_slug: "rare-ultra" },
+            ("LO", 187, "AA"),
+            UrlEntry { era: "sword-shield", set_slug: "lost-origin", card_slug: "hisuian-goodra-v", rarity_slug: "rare-ultra" },
         );
-        // Brilliant Stars — Arceus VSTAR Alt Art
+
+        // slot 41 — Arceus VSTAR (Brilliant Stars alt art)
         m.insert(
             ("BS", 184, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "brilliant-stars", card_slug: "arceus-vstar", rarity_slug: "rare-ultra" },
         );
-        // Stellar Crown — Lance's Charizard ex SAR
+
+        // slot 42 — Terapagos ex SIR (Stellar Crown)
         m.insert(
-            ("SC", 232, "SAR"),
-            UrlEntry { era: "scarlet-violet", set_slug: "stellar-crown", card_slug: "lances-charizard-ex", rarity_slug: "special-illustration-rare" },
+            ("SC", 170, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "stellar-crown", card_slug: "terapagos-ex", rarity_slug: "special-illustration-rare" },
         );
-        // Pokemon GO
+
+        // slots 43-44 — Pokemon GO
         m.insert(
             ("PGO", 11, "RR"),
             UrlEntry { era: "sword-shield", set_slug: "pokemon-go", card_slug: "radiant-charizard", rarity_slug: "rare-ultra" },
@@ -392,30 +408,35 @@ static CARD_CODEX_URLS: LazyLock<HashMap<(&'static str, u16, &'static str), UrlE
             ("PGO", 86, "AA"),
             UrlEntry { era: "sword-shield", set_slug: "pokemon-go", card_slug: "mewtwo-vstar",      rarity_slug: "rare-ultra" },
         );
-        // Paldean Fates — Penny SAR
+
+        // slot 45 — Penny SAR (Paldean Fates; sv4pt5-239, NOT 91)
         m.insert(
-            ("PaF", 91, "SAR"),
+            ("PaF", 239, "SAR"),
             UrlEntry { era: "scarlet-violet", set_slug: "paldean-fates", card_slug: "penny", rarity_slug: "special-illustration-rare" },
         );
-        // Twilight Masquerade — Hydreigon ex SIR
+
+        // slot 46 — Hydreigon ex SIR is in Surging Sparks (sv8-240), NOT Twilight Masquerade
         m.insert(
-            ("TM", 167, "SIR"),
-            UrlEntry { era: "scarlet-violet", set_slug: "twilight-masquerade", card_slug: "hydreigon-ex", rarity_slug: "special-illustration-rare" },
+            ("SS", 240, "SIR"),
+            UrlEntry { era: "scarlet-violet", set_slug: "surging-sparks", card_slug: "hydreigon-ex", rarity_slug: "special-illustration-rare" },
         );
-        // Paradox Rift — Mela SAR
+
+        // slot 47 — Mela SAR (Paradox Rift; sv4-254, NOT 191)
         m.insert(
-            ("PR", 191, "SAR"),
+            ("PR", 254, "SAR"),
             UrlEntry { era: "scarlet-violet", set_slug: "paradox-rift", card_slug: "mela", rarity_slug: "special-illustration-rare" },
         );
-        // Paldea Evolved — Boss's Orders SAR
+
+        // slot 48 — Boss's Orders (Ghetsis) SIR (Paldea Evolved; sv2-265, NOT 270)
         m.insert(
-            ("PaE", 270, "SAR"),
+            ("PaE", 265, "SAR"),
             UrlEntry { era: "scarlet-violet", set_slug: "paldea-evolved", card_slug: "bosss-orders", rarity_slug: "special-illustration-rare" },
         );
-        // Obsidian Flames — Tyranitar ex SIR
+
+        // slot 49 — Tyranitar ex Ultra Rare (Obsidian Flames; sv3-211, variant AA — no SIR exists)
         m.insert(
-            ("OF", 226, "SIR"),
-            UrlEntry { era: "scarlet-violet", set_slug: "obsidian-flames", card_slug: "tyranitar-ex", rarity_slug: "special-illustration-rare" },
+            ("OF", 211, "AA"),
+            UrlEntry { era: "scarlet-violet", set_slug: "obsidian-flames", card_slug: "tyranitar-ex", rarity_slug: "rare-ultra" },
         );
 
         m
