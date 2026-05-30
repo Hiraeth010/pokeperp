@@ -18,7 +18,7 @@ export const UPDATES: Update[] = [
     id: "2026-05-29-buybacks-20sol",
     date: "2026-05-29",
     tag: "Buybacks",
-    body: `**20 SOL of $POKE buybacks into the chart, lifetime** (~$1.65k at $82.7/SOL). Every buy is on-chain through the Meteora DAMM v2 pool.
+    body: `**20 SOL of $POKE buybacks into the chart, lifetime.** Every buy is on-chain through the Meteora DAMM v2 pool.
 
 The bought supply lives in the **dev buyback wallet** — publicly trackable on [FOMO ↗](https://fomo.family/profile/PokePerpss). Current stack held: **~47.4M $POKE**.`,
   },
