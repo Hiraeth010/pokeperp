@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 /// Per-constituent operational state persisted across runs.
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct PublisherState {
-    /// Constituent index (0..25) → last day a fresh aggregate was computed.
+    /// Constituent index (0..CONSTITUENT_COUNT) → last day a fresh aggregate was computed.
     /// Days are Unix days since epoch (i.e. `timestamp / 86_400`).
     #[serde(with = "u8_keyed_map")]
     pub last_fresh_day: HashMap<u8, u32>,

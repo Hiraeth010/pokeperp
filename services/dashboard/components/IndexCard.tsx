@@ -53,10 +53,10 @@ export default function IndexCard() {
       <div className="flex items-start justify-between mb-2 relative z-[1]">
         <div>
           <h1 className="font-display text-3xl sm:text-4xl tracking-tight">
-            PMT25
+            PMT50
           </h1>
           <p className="text-xs text-[rgb(var(--muted))] mt-1">
-            PSA 10 Modern Top 25 · {day !== null ? `day ${day}` : "perpetual index"}
+            PSA 10 Modern Top 50 · {day !== null ? `day ${day}` : "perpetual index"}
           </p>
         </div>
         <div className="flex items-center gap-1.5">

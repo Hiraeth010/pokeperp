@@ -1,12 +1,12 @@
 # Trading the perp
 
 Pokeperp is an **oracle-anchored perpetual**: there's no order book. The protocol
-quotes a price off the PMT25 index, and you open leveraged long/short positions
+quotes a price off the PMT50 index, and you open leveraged long/short positions
 against it with isolated margin, settled in USDC.
 
 ## Mark vs. index
 
-- **Index** — the daily PMT25 settlement value from the oracle. It only updates
+- **Index** — the daily PMT50 settlement value from the oracle. It only updates
   once per UTC day (that's the resolution of the underlying sold-price data).
 - **Mark** — the live trading price: `mark = index × (1 + slippage × imbalance)`,
   where imbalance is net open interest (longs − shorts). Heavy one-sided flow pushes

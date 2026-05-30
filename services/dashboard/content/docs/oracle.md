@@ -1,6 +1,6 @@
 # The oracle & price integrity
 
-Everything in Pokeperp settles against the PMT25 index, so the oracle that produces
+Everything in Pokeperp settles against the PMT50 index, so the oracle that produces
 that index is the most important — and most carefully designed — part of the
 protocol. It's a **federated push oracle** with on-chain aggregation and a
 permissionless dispute mechanism.

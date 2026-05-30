@@ -1,7 +1,7 @@
-# The PMT25 Index
+# The PMT50 Index
 
-PMT25 (PSA 10 Modern Top 25) is the underlying that Pokeperp settles against. It
-tracks the 25 most-traded modern-era Pokémon cards in PSA 10 grade, as an
+PMT50 (PSA 10 Modern Top 50) is the underlying that Pokeperp settles against. It
+tracks the 50 most-traded modern-era Pokémon cards in PSA 10 grade, as an
 equal-weighted price index.
 
 ## What goes in the index
@@ -14,14 +14,14 @@ To qualify, a card must be:
 - **English-language, PSA 10**, with no qualifier labels (no OC/ST/MK grades).
 - Liquid enough: roughly ≥50 sales and ≥100 PSA population, from a set ≥180 days old.
 
-The 25 constituents are **equal-weighted** (4% each), so no single card dominates.
+The 50 constituents are **equal-weighted** (2% each), so no single card dominates.
 
 ## How the value is computed
 
 Each day the index value is:
 
 ```
-I = 1000 × (1/25) × Σ (Pₜ / P_base)
+I = 1000 × (1/50) × Σ (Pₜ / P_base)
 ```
 
 where `Pₜ` is today's aggregated price for a constituent and `P_base` is its price
@@ -31,7 +31,7 @@ when it entered the index. The index starts at **1000** and moves with the baske
 
 The basket is reviewed **monthly**. To avoid churn from cards bobbing around the
 cutoff, there's a soft buffer: a constituent isn't dropped until it falls past
-rank ~40. This keeps the index stable month to month while still tracking what's
+rank ~75. This keeps the index stable month to month while still tracking what's
 actually trading.
 
 ## Pricing methodology

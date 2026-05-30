@@ -26,14 +26,21 @@ const SET_CODE_TO_API: Record<string, string> = {
   ST: "swsh12",       // Silver Tempest
   CZ: "swsh12pt5gg",  // Crown Zenith Galarian Gallery
   SF: "swsh45sv",     // Shining Fates Shiny Vault
+  CEL: "cel25",       // Celebrations (v0.10: Pikachu V-UNION)
+  PGO: "pgo",         // Pokemon GO (v0.10)
   // Sun & Moon era
   UB: "sm10",         // Unbroken Bonds
   UM: "sm11",         // Unified Minds
   // Scarlet & Violet era
   PE: "sv2",          // Paldea Evolved
+  PaE: "sv2",         // Paldea Evolved (v0.10 alias used by Boss's Orders SAR)
   OF: "sv3",          // Obsidian Flames
   PMK: "sv3pt5",      // Pokemon 151
   PaF: "sv4pt5",      // Paldean Fates
+  PR: "sv4",          // Paradox Rift (v0.10)
+  TM: "sv6",          // Twilight Masquerade (v0.10)
+  SS: "sv8",          // Surging Sparks (v0.10)
+  SC: "sv7",          // Stellar Crown (v0.10)
 };
 
 /** Friendly long-form name for the set, used in tooltips and detail labels. */
@@ -48,12 +55,19 @@ const SET_CODE_TO_NAME: Record<string, string> = {
   ST: "Silver Tempest",
   CZ: "Crown Zenith",
   SF: "Shining Fates",
+  CEL: "Celebrations",
+  PGO: "Pokemon GO",
   UB: "Unbroken Bonds",
   UM: "Unified Minds",
   PE: "Paldea Evolved",
+  PaE: "Paldea Evolved",
   OF: "Obsidian Flames",
   PMK: "Pokemon 151",
   PaF: "Paldean Fates",
+  PR: "Paradox Rift",
+  TM: "Twilight Masquerade",
+  SS: "Surging Sparks",
+  SC: "Stellar Crown",
 };
 
 /** Display name for a card given (set_code, collector_number, variant_code).
@@ -104,6 +118,48 @@ const CARD_NAMES: Record<string, string> = {
   "PE-269-SAR": "Iono",
   // Shining Fates Shiny Vault (swsh45sv) — naive URL doesn't resolve (SV-prefixed)
   "SF-107-RR": "Charizard VMAX (Shiny Vault)",
+
+  // ===== PMT26-50 (v0.10 expansion) =====
+  // Silver Tempest — Lugia VSTAR Alt Art (distinct from ST-186 Lugia V)
+  "ST-211-AA":  "Lugia VSTAR",
+  // Pokemon 151 SIR
+  "PMK-193-SIR": "Pikachu ex (151)",
+  "PMK-200-SIR": "Blastoise ex (151)",
+  "PMK-198-SIR": "Venusaur ex (151)",
+  "PMK-201-SIR": "Alakazam ex (151)",
+  "PMK-205-SIR": "Mew ex (151)",
+  // Lost Origin — Giratina VSTAR Alt Art
+  "LO-213-AA":  "Giratina VSTAR",
+  // Surging Sparks — Pikachu ex SIR
+  "SS-238-SIR": "Pikachu ex (Surging Sparks)",
+  // Celebrations — Pikachu V-UNION
+  "CEL-25-UN":  "Pikachu V-UNION",
+  // Crown Zenith Galarian Gallery (additional GG chase cards beyond GG56)
+  "CZ-29-GG":   "Charizard VSTAR (GG)",
+  "CZ-44-GG":   "Pikachu VMAX (GG)",
+  "CZ-50-GG":   "Rayquaza VMAX (GG)",
+  "CZ-51-GG":   "Zacian V (GG)",
+  // Astral Radiance alt arts
+  "AR-211-AA":  "Origin Forme Palkia VSTAR",
+  "AR-209-AA":  "Origin Forme Dialga VSTAR",
+  "AR-205-AA":  "Hisuian Goodra V",
+  // Brilliant Stars — Arceus VSTAR Alt Art
+  "BS-184-AA":  "Arceus VSTAR",
+  // Stellar Crown — Lance's Charizard ex SAR
+  "SC-232-SAR": "Lance's Charizard ex",
+  // Pokemon GO
+  "PGO-11-RR":  "Radiant Charizard",
+  "PGO-86-AA":  "Mewtwo VSTAR",
+  // Paldean Fates — Penny SAR
+  "PaF-91-SAR": "Penny",
+  // Twilight Masquerade — Hydreigon ex SIR
+  "TM-167-SIR": "Hydreigon ex",
+  // Paradox Rift — Mela SAR
+  "PR-191-SAR": "Mela",
+  // Paldea Evolved — Boss's Orders SAR
+  "PaE-270-SAR": "Boss's Orders",
+  // Obsidian Flames — Tyranitar ex SIR
+  "OF-226-SIR": "Tyranitar ex",
 };
 
 export interface CardIdentity {

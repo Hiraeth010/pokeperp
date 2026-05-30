@@ -7,11 +7,17 @@
 //!   - 8-byte discriminator: `sha256("global:submit_price_update")[0..8]`
 //!   - args (borsh, little-endian):
 //!       day: u32
-//!       prices: [u64; 25]
-//!       sale_counts: [u16; 25]
+//!       prices: [u64; CONSTITUENT_COUNT]
+//!       sale_counts: [u16; CONSTITUENT_COUNT]
 //!       source_root: [u8; 32]
 //!
 //! Spec: docs/oracle.md §4, programs/oracle/src/lib.rs `submit_price_update`.
+
+/// Number of cards in the index. Mirrors `programs/oracle/src/state.rs`
+/// `CONSTITUENT_COUNT`. Bumping requires regenerating the IDL on both ends
+/// and reallocating the on-chain Registry + IndexState (admin one-shot).
+/// v0.10 expansion: 25 → 50.
+pub const CONSTITUENT_COUNT: usize = 50;
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -26,8 +32,8 @@ use solana_sdk::{
 
 pub struct SubmitParams {
     pub day: u32,
-    pub prices: [u64; 25],
-    pub sale_counts: [u16; 25],
+    pub prices: [u64; CONSTITUENT_COUNT],
+    pub sale_counts: [u16; CONSTITUENT_COUNT],
     pub source_root: [u8; 32],
 }
 
@@ -58,9 +64,14 @@ fn anchor_discriminator(ix_name: &str) -> [u8; 8] {
 }
 
 /// Borsh-encode the submit_price_update arguments into a contiguous byte buffer.
-fn encode_args(day: u32, prices: &[u64; 25], sale_counts: &[u16; 25], source_root: &[u8; 32]) -> Vec<u8> {
-    // Capacity: 4 + 25×8 + 25×2 + 32 = 286 bytes
-    let mut buf = Vec::with_capacity(4 + 25 * 8 + 25 * 2 + 32);
+fn encode_args(
+    day: u32,
+    prices: &[u64; CONSTITUENT_COUNT],
+    sale_counts: &[u16; CONSTITUENT_COUNT],
+    source_root: &[u8; 32],
+) -> Vec<u8> {
+    // Capacity: 4 + N×8 + N×2 + 32 bytes
+    let mut buf = Vec::with_capacity(4 + CONSTITUENT_COUNT * 8 + CONSTITUENT_COUNT * 2 + 32);
     buf.extend_from_slice(&day.to_le_bytes());
     for p in prices {
         buf.extend_from_slice(&p.to_le_bytes());
@@ -219,7 +230,15 @@ mod tests {
 
     #[test]
     fn args_buffer_has_expected_size() {
-        let buf = encode_args(0, &[0u64; 25], &[0u16; 25], &[0u8; 32]);
-        assert_eq!(buf.len(), 4 + 25 * 8 + 25 * 2 + 32);
+        let buf = encode_args(
+            0,
+            &[0u64; CONSTITUENT_COUNT],
+            &[0u16; CONSTITUENT_COUNT],
+            &[0u8; 32],
+        );
+        assert_eq!(
+            buf.len(),
+            4 + CONSTITUENT_COUNT * 8 + CONSTITUENT_COUNT * 2 + 32
+        );
     }
 }

@@ -51,7 +51,7 @@ export default function UpdatesPage() {
           <span aria-hidden>📌</span> Pinned
         </div>
         <p className="text-sm leading-7 text-[rgb(var(--foreground))]/90">
-          Pokeperp is a fully open-sourced perp DEX trading against the PSA 10 Modern Top 25 Pokémon Card Index.
+          Pokeperp is a fully open-sourced perp DEX trading against the PSA 10 Modern Top 50 Pokémon Card Index.
         </p>
         <span className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-[rgb(var(--electric-from))]">
           View the source on GitHub ↗

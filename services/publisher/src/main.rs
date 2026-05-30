@@ -1,6 +1,6 @@
 //! Pokeperp publisher service.
 //!
-//! Fetches PSA 10 prices for the 25 PMT25 constituents, applies the methodology,
+//! Fetches PSA 10 prices for the 50 PMT50 constituents, applies the methodology,
 //! and submits a signed PriceUpdate to the on-chain oracle. Two pricing paths are
 //! supported via `[sources] primary`:
 //!
@@ -36,7 +36,7 @@ use crate::sources::{
     AggregatePriceSource, ConstituentQuery, PriceSource, SoldListing, TimeWindow,
 };
 use crate::state::{state_path_for_config, PublisherState};
-use crate::submit::SubmitParams;
+use crate::submit::{SubmitParams, CONSTITUENT_COUNT};
 
 #[derive(Parser)]
 #[command(name = "pokeperp-publisher", version)]
@@ -438,7 +438,7 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
     let tolerance_bps_i = tolerance_bps as i64;
     let mut max_dev_bps: i64 = 0; // overall max — informational
     let mut drift_count: u32 = 0; // count exceeding tolerance — actionable
-    for i in 0..25 {
+    for i in 0..CONSTITUENT_COUNT {
         let sub = submitted.prices[i];
         let loc = local_prices[i];
         let sub_sc = submitted.sale_counts[i];
@@ -485,11 +485,11 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
 
     if drift_count > 0 || !root_match {
         return Err(anyhow!(
-            "verify FAILED: {drift_count}/25 slot(s) drifted (max {max_dev_bps} bps, tolerance {tolerance_bps} bps); source_root match = {root_match}"
+            "verify FAILED: {drift_count}/{CONSTITUENT_COUNT} slot(s) drifted (max {max_dev_bps} bps, tolerance {tolerance_bps} bps); source_root match = {root_match}"
         ));
     }
     info!(
-        slots_checked = 25,
+        slots_checked = CONSTITUENT_COUNT,
         max_dev_bps,
         "✓ verify OK — all slots within tolerance, source_root matches"
     );
@@ -497,20 +497,21 @@ async fn verify_day(cfg: &config::Config, day: u32, tolerance_bps: u32) -> Resul
 }
 
 /// Decoded on-chain `PriceUpdate` (oracle::state::PriceUpdate, declaration-order
-/// borsh layout under Anchor's 8-byte discriminator):
-///   offset  0.. 8:  discriminator
-///   offset  8..40:  publisher (Pubkey)
-///   offset 40..44:  day (u32 LE)
-///   offset 44..244: prices ([u64; 25] LE)
-///   offset 244..294: sale_counts ([u16; 25] LE)
-///   offset 294..326: source_root ([u8; 32])
-///   offset 326..334: submitted_at (i64 LE)
-///   offset 334..335: bump (u8)
+/// borsh layout under Anchor's 8-byte discriminator).  Offsets parameterised by
+/// `CONSTITUENT_COUNT = N` so flipping N keeps the layout consistent:
+///   offset  0.. 8:                   discriminator
+///   offset  8..40:                   publisher (Pubkey)
+///   offset 40..44:                   day (u32 LE)
+///   offset 44 .. 44+8N:              prices ([u64; N] LE)
+///   offset 44+8N .. 44+8N+2N:        sale_counts ([u16; N] LE)
+///   offset 44+10N .. 44+10N+32:      source_root ([u8; 32])
+///   offset 44+10N+32 .. 44+10N+40:   submitted_at (i64 LE)
+///   offset 44+10N+40:                bump (u8)
 struct SubmittedPriceUpdate {
     publisher: Pubkey,
     day: u32,
-    prices: [u64; 25],
-    sale_counts: [u16; 25],
+    prices: [u64; CONSTITUENT_COUNT],
+    sale_counts: [u16; CONSTITUENT_COUNT],
     source_root: [u8; 32],
 }
 
@@ -518,8 +519,8 @@ fn parse_price_update(data: &[u8]) -> Result<SubmittedPriceUpdate> {
     const PUBLISHER_OFF: usize = 8;
     const DAY_OFF: usize = 40;
     const PRICES_OFF: usize = 44;
-    const SALE_COUNTS_OFF: usize = 244;
-    const SOURCE_ROOT_OFF: usize = 294;
+    const SALE_COUNTS_OFF: usize = PRICES_OFF + CONSTITUENT_COUNT * 8;
+    const SOURCE_ROOT_OFF: usize = SALE_COUNTS_OFF + CONSTITUENT_COUNT * 2;
     const MIN_LEN: usize = SOURCE_ROOT_OFF + 32;
     if data.len() < MIN_LEN {
         return Err(anyhow!(
@@ -535,8 +536,8 @@ fn parse_price_update(data: &[u8]) -> Result<SubmittedPriceUpdate> {
             .try_into()
             .map_err(|_| anyhow!("day slice"))?,
     );
-    let mut prices = [0u64; 25];
-    for i in 0..25 {
+    let mut prices = [0u64; CONSTITUENT_COUNT];
+    for i in 0..CONSTITUENT_COUNT {
         let off = PRICES_OFF + i * 8;
         prices[i] = u64::from_le_bytes(
             data[off..off + 8]
@@ -544,8 +545,8 @@ fn parse_price_update(data: &[u8]) -> Result<SubmittedPriceUpdate> {
                 .map_err(|_| anyhow!("price[{i}] slice"))?,
         );
     }
-    let mut sale_counts = [0u16; 25];
-    for i in 0..25 {
+    let mut sale_counts = [0u16; CONSTITUENT_COUNT];
+    for i in 0..CONSTITUENT_COUNT {
         let off = SALE_COUNTS_OFF + i * 2;
         sale_counts[i] = u16::from_le_bytes(
             data[off..off + 2]
@@ -713,15 +714,65 @@ fn curated_query(set_code: &str, collector_number: u16, variant_code: &str) -> O
         ("PE", 269, "SAR") => "Pokemon Iono Paldea Evolved 269 Special Art Rare PSA 10",
         // ----- Shining Fates Shiny Vault (swsh45sv) -----
         ("SF", 107, "RR") => "Pokemon Charizard VMAX Shining Fates Shiny Vault SV107 PSA 10",
+
+        // ====== PMT26-50 (v0.10 expansion) ======
+        // Silver Tempest — Lugia VSTAR Alt Art (distinct from existing Lugia V at ST-186)
+        ("ST", 211, "AA")  => "Pokemon Lugia VSTAR Silver Tempest 211 Alt Art PSA 10",
+        // Pokemon 151 SIR chase cards (sv3pt5) — slot 17 (Charizard SIR) already covers 199
+        ("PMK", 193, "SIR") => "Pokemon Pikachu ex 151 193 Special Illustration Rare PSA 10",
+        ("PMK", 200, "SIR") => "Pokemon Blastoise ex 151 200 Special Illustration Rare PSA 10",
+        ("PMK", 198, "SIR") => "Pokemon Venusaur ex 151 198 Special Illustration Rare PSA 10",
+        ("PMK", 201, "SIR") => "Pokemon Alakazam ex 151 201 Special Illustration Rare PSA 10",
+        ("PMK", 205, "SIR") => "Pokemon Mew ex 151 205 Special Illustration Rare PSA 10",
+        // Lost Origin — Giratina VSTAR Alt Art (distinct from existing LO-186 Giratina V)
+        ("LO", 213, "AA")  => "Pokemon Giratina VSTAR Lost Origin 213 Alt Art PSA 10",
+        // Surging Sparks — Pikachu ex SIR
+        ("SS", 238, "SIR") => "Pokemon Pikachu ex Surging Sparks 238 Special Illustration Rare PSA 10",
+        // Celebrations — Pikachu V-UNION (puzzle-card; sellers usually list full V-UNION)
+        ("CEL", 25, "UN")  => "Pokemon Pikachu V-UNION Celebrations PSA 10",
+        // Crown Zenith Galarian Gallery (GG chase cards beyond GG56 Hisuian Zoroark)
+        ("CZ", 29, "GG")   => "Pokemon Charizard VSTAR Crown Zenith GG29 PSA 10",
+        ("CZ", 44, "GG")   => "Pokemon Pikachu VMAX Crown Zenith GG44 PSA 10",
+        ("CZ", 50, "GG")   => "Pokemon Rayquaza VMAX Crown Zenith GG50 PSA 10",
+        ("CZ", 51, "GG")   => "Pokemon Zacian V Crown Zenith GG51 PSA 10",
+        // Astral Radiance alt arts (slot 18 covers GG56 Hisuian Zoroark via the AR-188 override)
+        ("AR", 211, "AA")  => "Pokemon Origin Palkia VSTAR Astral Radiance 211 Alt Art PSA 10",
+        ("AR", 209, "AA")  => "Pokemon Origin Dialga VSTAR Astral Radiance 209 Alt Art PSA 10",
+        ("AR", 205, "AA")  => "Pokemon Hisuian Goodra V Astral Radiance 205 Alt Art PSA 10",
+        // Brilliant Stars — Arceus VSTAR Alt Art
+        ("BS", 184, "AA")  => "Pokemon Arceus VSTAR Brilliant Stars 184 Alt Art PSA 10",
+        // Stellar Crown — Lance's Charizard ex SAR
+        ("SC", 232, "SAR") => "Pokemon Lance's Charizard ex Stellar Crown 232 Special Art Rare PSA 10",
+        // Pokemon GO
+        ("PGO", 11, "RR")  => "Pokemon Radiant Charizard Pokemon GO 11 PSA 10",
+        ("PGO", 86, "AA")  => "Pokemon Mewtwo VSTAR Pokemon GO 86 Alt Art PSA 10",
+        // Paldean Fates — Penny SAR
+        ("PaF", 91, "SAR") => "Pokemon Penny Paldean Fates 91 Special Art Rare PSA 10",
+        // Twilight Masquerade — Hydreigon ex SIR
+        ("TM", 167, "SIR") => "Pokemon Hydreigon ex Twilight Masquerade 167 Special Illustration Rare PSA 10",
+        // Paradox Rift — Mela SAR
+        ("PR", 191, "SAR") => "Pokemon Mela Paradox Rift 191 Special Art Rare PSA 10",
+        // Paldea Evolved — Boss's Orders SAR
+        ("PaE", 270, "SAR") => "Pokemon Boss's Orders Paldea Evolved 270 Special Art Rare PSA 10",
+        // Obsidian Flames — Tyranitar ex SIR
+        ("OF", 226, "SIR") => "Pokemon Tyranitar ex Obsidian Flames 226 Special Illustration Rare PSA 10",
+
         _ => return None,
     };
     Some(s.to_string())
 }
 
 /// v0.2 fallback: deterministically drift on-chain base prices by ±2%, day-keyed.
-fn compute_drift(day: u32, constituents: &[ConstituentInfo]) -> ([u64; 25], [u16; 25], [u8; 32]) {
-    let mut prices = [0u64; 25];
-    let sale_counts = [50u16; 25];
+fn compute_drift(
+    day: u32,
+    constituents: &[ConstituentInfo],
+) -> (
+    [u64; CONSTITUENT_COUNT],
+    [u16; CONSTITUENT_COUNT],
+    [u8; 32],
+) {
+    let mut prices = [0u64; CONSTITUENT_COUNT];
+    let sale_counts = [50u16; CONSTITUENT_COUNT];
     for (i, c) in constituents.iter().enumerate() {
         prices[i] = drift_price(c.base_price, day, i);
         if prices[i] == 0 {
@@ -741,7 +792,11 @@ async fn compute_from_ebay(
     day: u32,
     constituents: &[ConstituentInfo],
     state: &mut PublisherState,
-) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
+) -> Result<(
+    [u64; CONSTITUENT_COUNT],
+    [u16; CONSTITUENT_COUNT],
+    [u8; 32],
+)> {
     let source: Box<dyn PriceSource> = Box::new(build_ebay_source(cfg)?);
     compute_from_source(source, cfg, day, constituents, state).await
 }
@@ -756,7 +811,11 @@ async fn compute_from_scraper(
     day: u32,
     constituents: &[ConstituentInfo],
     state: &mut PublisherState,
-) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
+) -> Result<(
+    [u64; CONSTITUENT_COUNT],
+    [u16; CONSTITUENT_COUNT],
+    [u8; 32],
+)> {
     let url = std::env::var("SCRAPER_URL").ok().or_else(|| {
         cfg.sources
             .per_source
@@ -784,7 +843,11 @@ async fn compute_from_source(
     day: u32,
     constituents: &[ConstituentInfo],
     state: &mut PublisherState,
-) -> Result<([u64; 25], [u16; 25], [u8; 32])> {
+) -> Result<(
+    [u64; CONSTITUENT_COUNT],
+    [u16; CONSTITUENT_COUNT],
+    [u8; 32],
+)> {
     // Aggregate fallback (Card-Codex) is queried when the listing-based source
     // returns insufficient samples. Always-on for now — no config gate needed
     // because the per-card URL mapping returns None for cards Card-Codex
@@ -813,8 +876,8 @@ async fn compute_from_source(
         end_unix: now,
     };
 
-    let mut prices = [0u64; 25];
-    let mut sale_counts = [0u16; 25];
+    let mut prices = [0u64; CONSTITUENT_COUNT];
+    let mut sale_counts = [0u16; CONSTITUENT_COUNT];
     let mut all_leaves: Vec<[u8; 32]> = Vec::new();
 
     for (i, c) in constituents.iter().enumerate() {
@@ -944,7 +1007,7 @@ fn drift_price(base_microusdc: u64, day: u32, slot: usize) -> u64 {
     scaled.max(1) as u64
 }
 
-fn placeholder_root(day: u32, prices: &[u64; 25]) -> [u8; 32] {
+fn placeholder_root(day: u32, prices: &[u64; CONSTITUENT_COUNT]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(b"placeholder:");
@@ -955,10 +1018,10 @@ fn placeholder_root(day: u32, prices: &[u64; 25]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Parse all 25 constituents from the raw account bytes.
+/// Parse all `CONSTITUENT_COUNT` constituents from the raw account bytes.
 /// Layout (see programs/oracle/src/state.rs ConstituentRegistry, repr(C) zero_copy):
-///   offset 0..8:     Anchor discriminator
-///   offset 8..1608:  constituents [Constituent; 25]   (64 bytes each)
+///   offset 0..8:                       Anchor discriminator
+///   offset 8 .. 8+64×N:                constituents [Constituent; N]   (64 bytes each)
 ///
 /// Each Constituent (offsets relative to its own start):
 ///   0..8:    base_price (u64)
@@ -971,7 +1034,7 @@ fn placeholder_root(day: u32, prices: &[u64; 25]) -> [u8; 32] {
 fn parse_registry(data: &[u8]) -> Result<Vec<ConstituentInfo>> {
     const DISCRIMINATOR_BYTES: usize = 8;
     const STRIDE: usize = 64;
-    const MIN_LEN: usize = DISCRIMINATOR_BYTES + 25 * STRIDE;
+    const MIN_LEN: usize = DISCRIMINATOR_BYTES + CONSTITUENT_COUNT * STRIDE;
     if data.len() < MIN_LEN {
         return Err(anyhow!(
             "registry account too short: {} bytes (need >= {})",
@@ -980,8 +1043,8 @@ fn parse_registry(data: &[u8]) -> Result<Vec<ConstituentInfo>> {
         ));
     }
 
-    let mut out = Vec::with_capacity(25);
-    for i in 0..25 {
+    let mut out = Vec::with_capacity(CONSTITUENT_COUNT);
+    for i in 0..CONSTITUENT_COUNT {
         let off = DISCRIMINATOR_BYTES + i * STRIDE;
         let base_price = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
         let set_code = bytes_to_ascii_string(&data[off + 40..off + 48]);
@@ -1013,7 +1076,7 @@ mod tests {
     fn drift_is_within_2pct() {
         let base = 1_000_000_000u64;
         for day in 0..30u32 {
-            for slot in 0..25usize {
+            for slot in 0..CONSTITUENT_COUNT {
                 let p = drift_price(base, day, slot);
                 let pct = ((p as i128 - base as i128) * 10_000) / (base as i128);
                 assert!(pct.abs() <= 200, "day={} slot={} pct_bps={}", day, slot, pct);

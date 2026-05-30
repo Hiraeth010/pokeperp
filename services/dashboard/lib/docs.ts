@@ -5,7 +5,7 @@
  *  The filesystem read lives in the server page (app/docs/[slug]/page.tsx). */
 export const DOCS = [
   { slug: "overview", title: "What is Pokeperp?" },
-  { slug: "index-methodology", title: "The PMT25 Index" },
+  { slug: "index-methodology", title: "The PMT50 Index" },
   { slug: "perpetuals", title: "Trading the perp" },
   { slug: "oracle", title: "The oracle" },
 ] as const;

@@ -149,14 +149,17 @@ async function main(): Promise<void> {
     "Charizard OF","Gardevoir","Iono","Charizard TG","Charizard SV",
   ];
   console.log("\nPer-constituent prices (BEFORE → AFTER):");
-  for (let i = 0; i < 25; i++) {
+  // PMT50 (v0.10): iterate the full constituent count; names array beyond
+  // PMT25 is intentionally not extended here — this is a one-off ops script
+  // used for past localnet/devnet aggregation fixes, not a steady-state tool.
+  for (let i = 0; i < (after.aggregatedPrices as BN[]).length; i++) {
     const b = Number((before.aggregatedPrices as BN[])[i]) / 1e6;
     const a = Number((after.aggregatedPrices as BN[])[i]) / 1e6;
     const delta = a - b;
     const sign = delta > 0 ? "+" : "";
     const arrow = Math.abs(delta) < 0.01 ? "  =" : delta > 0 ? "↑" : "↓";
     console.log(
-      `  slot ${String(i).padStart(2)}  $${b.toFixed(2).padStart(8)} → $${a.toFixed(2).padStart(8)}  ${arrow} ${sign}${delta.toFixed(2).padStart(8)}  ${names[i]}`,
+      `  slot ${String(i).padStart(2)}  $${b.toFixed(2).padStart(8)} → $${a.toFixed(2).padStart(8)}  ${arrow} ${sign}${delta.toFixed(2).padStart(8)}  ${names[i] ?? `slot ${i}`}`,
     );
   }
 

@@ -182,7 +182,7 @@ function PositionCard({ position, previewCards }: PositionCardProps) {
         <div className="flex items-baseline justify-between mb-2">
           <div className="flex items-baseline gap-2.5">
             <span className={`label-caps ${sideColor}`}>{side}</span>
-            <span className="font-display text-sm tracking-tight">PMT25</span>
+            <span className="font-display text-sm tracking-tight">PMT50</span>
             <span className="tabular text-base text-[rgb(var(--foreground))]/90 font-semibold">
               {formatUsdCompact(abs)}
             </span>

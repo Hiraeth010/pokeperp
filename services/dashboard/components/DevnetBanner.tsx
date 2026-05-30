@@ -34,7 +34,7 @@ export default function DevnetBanner() {
           <span className="font-medium tracking-wide">
             <span className="uppercase font-bold text-sky-300 mr-1.5">Live on Mainnet</span>
             <span className="opacity-90">
-              — the PMT25 index is live on-chain. Trading isn&apos;t open yet; we&apos;ll announce on{" "}
+              — the PMT50 index is live on-chain. Trading isn&apos;t open yet; we&apos;ll announce on{" "}
               <a href="https://x.com/pokeperpsss" target="_blank" rel="noopener noreferrer"
                 className="underline decoration-sky-400/60 underline-offset-2 hover:text-sky-100">@pokeperpsss</a>.
             </span>

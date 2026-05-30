@@ -33,7 +33,7 @@ export default function TopMovers({ limit = 6 }: { limit?: number }) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="label-caps">Top movers · since rebalance</h2>
         <span className="text-[10px] text-[rgb(var(--muted))] tabular">
-          constituents · 25
+          constituents · 50
         </span>
       </div>
       <Body

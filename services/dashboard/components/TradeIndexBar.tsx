@@ -27,9 +27,9 @@ export default function TradeIndexBar() {
   return (
     <div className="tcg-card tcg-holo flex items-center gap-5 sm:gap-7 py-4 px-5 sm:px-6 overflow-hidden">
       <div className="relative z-[1] flex items-baseline gap-2.5 min-w-0">
-        <span className="font-display text-xl tracking-tight">PMT25</span>
+        <span className="font-display text-xl tracking-tight">PMT50</span>
         <span className="text-[10px] text-[rgb(var(--muted))] uppercase tracking-wider font-semibold hidden sm:inline">
-          PSA 10 Modern Top 25
+          PSA 10 Modern Top 50
         </span>
       </div>
       <div className="relative z-[1] flex items-baseline gap-2 ml-auto">

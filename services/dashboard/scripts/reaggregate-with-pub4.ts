@@ -105,7 +105,8 @@ async function main(): Promise<void> {
   // Slots where pub-4 hit a 613 transient + fell back to inception prices.
   const STALE_SLOTS = new Set([0, 15, 16, 19, 21, 24]);
   console.log("\nPer-constituent prices (BEFORE → AFTER):");
-  for (let i = 0; i < 25; i++) {
+  // PMT50 (v0.10): iterate full constituent count from on-chain shape.
+  for (let i = 0; i < (after.aggregatedPrices as BN[]).length; i++) {
     const b = Number((before.aggregatedPrices as BN[])[i]) / 1e6;
     const a = Number((after.aggregatedPrices as BN[])[i]) / 1e6;
     const delta = a - b;
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
     const sign = delta >= 0 ? "+" : "";
     const tag = STALE_SLOTS.has(i) ? "  ← STALE (Oxylabs 613)" : "";
     console.log(
-      `  slot ${String(i).padStart(2)}  $${b.toFixed(2).padStart(8)} → $${a.toFixed(2).padStart(8)}  ${arrow} ${sign}${delta.toFixed(2).padStart(8)}  ${names[i]}${tag}`,
+      `  slot ${String(i).padStart(2)}  $${b.toFixed(2).padStart(8)} → $${a.toFixed(2).padStart(8)}  ${arrow} ${sign}${delta.toFixed(2).padStart(8)}  ${names[i] ?? `slot ${i}`}${tag}`,
     );
   }
 

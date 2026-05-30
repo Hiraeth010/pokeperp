@@ -1,8 +1,8 @@
 # What is Pokeperp?
 
 Pokeperp is a decentralized **perpetual futures exchange on Solana** where you take
-leveraged long or short positions on the **PSA 10 Modern Top 25 (PMT25)** — an index
-of the 25 most-traded modern-era Pokémon cards in PSA 10 grade.
+leveraged long or short positions on the **PSA 10 Modern Top 50 (PMT50)** — an index
+of the 50 most-traded modern-era Pokémon cards in PSA 10 grade.
 
 You're not buying or holding cards. You're trading a price feed: go **long** if you
 think graded modern Pokémon prices rise, **short** if you think they fall, with
@@ -17,8 +17,8 @@ leverageable instrument that settles on-chain.
 
 ## How it fits together
 
-- **The index (PMT25)** — a daily, methodology-driven value built from real eBay
-  PSA 10 sold prices. See *The PMT25 Index*.
+- **The index (PMT50)** — a daily, methodology-driven value built from real eBay
+  PSA 10 sold prices. See *The PMT50 Index*.
 - **The perp engine** — an oracle-anchored vAMM with isolated margin, funding, and
   liquidation. See *Trading the perp*.
 - **The oracle** — federated publishers push prices daily; the protocol aggregates
@@ -26,7 +26,7 @@ leverageable instrument that settles on-chain.
 
 ## Status
 
-> Pokeperp is **live on Solana mainnet** and settles against real USDC. The PMT25
+> Pokeperp is **live on Solana mainnet** and settles against real USDC. The PMT50
 > index is live on-chain and updates daily. **Trading isn't open yet** — it opens
 > once the insurance fund is seeded; we'll announce on [X / @pokeperpsss](https://x.com/pokeperpsss).
 > The official **$POKE** contract address will be posted here at launch — only trust

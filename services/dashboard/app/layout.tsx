@@ -20,9 +20,9 @@ const display = Russo_One({
 });
 
 export const metadata: Metadata = {
-  title: "Pokeperp · perpetuals on PSA 10 Modern Top 25",
+  title: "Pokeperp · perpetuals on PSA 10 Modern Top 50",
   description:
-    "Solana perpetual futures DEX on the PSA 10 Modern Top 25 Pokemon card index.",
+    "Solana perpetual futures DEX on the PSA 10 Modern Top 50 Pokemon card index.",
 };
 
 export default function RootLayout({
@@ -41,7 +41,7 @@ export default function RootLayout({
           <Nav />
           <main className="max-w-6xl mx-auto px-4 py-8">{children}</main>
           <footer className="max-w-6xl mx-auto px-4 py-10 mt-12 text-center text-[10px] text-[rgb(var(--muted))]">
-            Pokeperp · settles vs PMT25 · not affiliated with Nintendo, The
+            Pokeperp · settles vs PMT50 · not affiliated with Nintendo, The
             Pokémon Company, or PSA
           </footer>
         </WalletProvider>
