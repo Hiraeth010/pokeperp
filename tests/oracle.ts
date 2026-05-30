@@ -179,11 +179,11 @@ describe("oracle", () => {
       program.programId
     );
 
-    // 25-element price array (micro-USDC) — illustrative values.
-    const prices = Array.from({ length: 25 }, (_, i) =>
+    // 50-element price array (micro-USDC) — illustrative values.
+    const prices = Array.from({ length: 50 }, (_, i) =>
       new anchor.BN(1_000_000_000 + i * 10_000_000)
     );
-    const saleCounts = Array.from({ length: 25 }, () => 100);
+    const saleCounts = Array.from({ length: 50 }, () => 100);
     const sourceRoot = Array.from({ length: 32 }, () => 0);
 
     await program.methods
@@ -228,8 +228,8 @@ describe("oracle", () => {
       program.programId
     );
 
-    const prices = Array.from({ length: 25 }, () => new anchor.BN(1_000_000_000));
-    const saleCounts = Array.from({ length: 25 }, () => 100);
+    const prices = Array.from({ length: 50 }, () => new anchor.BN(1_000_000_000));
+    const saleCounts = Array.from({ length: 50 }, () => 100);
     const sourceRoot = Array.from({ length: 32 }, () => 0);
 
     let threw = false;
@@ -332,7 +332,7 @@ describe("oracle", () => {
   it("initializes the constituent registry to zero state", async () => {
     // Spec: docs/methodology.md §1, §5, §9.8.
     // The registry is zero-copy; init zero-fills the data segment.
-    // Caller then populates via 25× update_constituent + finalize_registry_update.
+    // Caller then populates via 50× update_constituent + finalize_registry_update.
     const [registryPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("registry")],
       program.programId
@@ -493,12 +493,12 @@ describe("oracle", () => {
     const idx = await program.account.indexState.fetch(indexStatePda);
     expect(idx.day).to.equal(submissionDay);
     expect(idx.status).to.deep.equal({ provisional: {} });
-    // All 25 constituents stale (1 submission < min_publishers_per_day = 3).
-    for (let i = 0; i < 25; i++) {
+    // All 50 constituents stale (1 submission < min_publishers_per_day = 3).
+    for (let i = 0; i < 50; i++) {
       expect(idx.constituentStatus[i]).to.equal(1);
       expect(idx.aggregatedPrices[i].toString()).to.equal("0");
     }
-    // Every stale ratio = 1.0 ×1e6 = 1_000_000; sum = 25 × 1e6 = 2.5e7; index = 40 × sum = 1e9.
+    // Every stale ratio = 1.0 ×1e6 = 1_000_000; sum = 50 × 1e6 = 5e7; index = (1000/50) × sum = 20 × 5e7 = 1e9.
     expect(idx.indexValue.toString()).to.equal("1000000000");
   });
 
@@ -1090,12 +1090,12 @@ describe("oracle", () => {
     const constituent = 0;
 
     const honest = Array.from(
-      { length: 25 },
+      { length: 50 },
       (_, i) => new anchor.BN(1_000_000_000 + i * 10_000_000)
     );
     const deviant = honest.slice();
     deviant[constituent] = new anchor.BN(1_500_000_000); // +50% on constituent 0
-    const saleCounts = Array.from({ length: 25 }, () => 100);
+    const saleCounts = Array.from({ length: 50 }, () => 100);
     const sourceRoot = Array.from({ length: 32 }, () => 0);
 
     const pubB = Keypair.generate();

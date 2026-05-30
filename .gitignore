@@ -32,6 +32,12 @@ services/publisher/examples/*.state.json
 # load_publisher_keypair() reads when that env var is unset.
 services/publisher/devnet-keys/
 
+# ============ Vanity keys — NEVER commit ============
+vanity-keys/
+
+# ============ Token launch keys — NEVER commit ============
+token-launch/
+
 # ============ Mainnet keys — NEVER commit ============
 # Fresh per-role keypairs for the mainnet launch (deploy/admin, publisher,
 # keeper, multisig signers). Injected as Railway/Vercel secrets at runtime.

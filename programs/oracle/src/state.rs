@@ -1,5 +1,12 @@
 use anchor_lang::prelude::*;
 
+/// Number of cards in the index. Was 25 (PMT25); expanded to 50 (PMT50) in v0.10.
+/// All fixed-size arrays (registry constituents, daily prices, aggregated_prices,
+/// constituent_status) are sized by this constant. Bumping it requires a
+/// `realloc` on the on-chain Registry + IndexState accounts (admin one-shot;
+/// existing populated indices are preserved, new tail bytes zero-initialise).
+pub const CONSTITUENT_COUNT: usize = 50;
+
 /// Global config for the oracle program.
 /// Spec: docs/oracle.md §2, §7, §8.
 #[account]
@@ -77,7 +84,7 @@ pub const BOND_VAULT_SEED: &[u8] = b"bond_vault";
 #[account(zero_copy)]
 #[repr(C)]
 pub struct ConstituentRegistry {
-    pub constituents: [Constituent; 25],
+    pub constituents: [Constituent; CONSTITUENT_COUNT],
     pub version: u32,
     pub effective_day: u32,
     pub bump: u8,
@@ -138,8 +145,8 @@ pub const CONSTITUENT_REGISTRY_SEED: &[u8] = b"registry";
 pub struct PriceUpdate {
     pub publisher: Pubkey,
     pub day: u32,
-    pub prices: [u64; 25],
-    pub sale_counts: [u16; 25],
+    pub prices: [u64; CONSTITUENT_COUNT],
+    pub sale_counts: [u16; CONSTITUENT_COUNT],
     pub source_root: [u8; 32],
     pub submitted_at: i64,
     pub bump: u8,
@@ -156,8 +163,8 @@ pub const PRICE_UPDATE_SEED: &[u8] = b"price";
 pub struct IndexState {
     pub day: u32,
     pub status: IndexStatus,
-    pub aggregated_prices: [u64; 25],
-    pub constituent_status: [u8; 25],
+    pub aggregated_prices: [u64; CONSTITUENT_COUNT],
+    pub constituent_status: [u8; CONSTITUENT_COUNT],
     pub index_value: u64,
     pub finalized_at: i64,
     pub bump: u8,

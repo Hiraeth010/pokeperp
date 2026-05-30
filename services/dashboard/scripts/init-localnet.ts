@@ -157,7 +157,7 @@ async function main(): Promise<void> {
   // match our naive {set_id}/{number}.png template (Trainer Gallery prefixes, Shiny
   // Vault SV-prefixed numbering) — the dashboard CardImage falls back to a textual
   // tile for those without erroring.
-  console.log("\n[5] Seeding 25 PMT25 constituents...");
+  console.log("\n[5] Seeding 50 PMT50 constituents...");
   const seeds: Array<{
     name: string;
     set: string;
@@ -209,6 +209,47 @@ async function main(): Promise<void> {
     { name: "Charizard TG",          set: "LO",  num:   3, variant: "TG",  total:  30, price:  393 },
     // Shining Fates Shiny Vault (swsh45sv) — fallback render
     { name: "Charizard VMAX SV",     set: "SF",  num: 107, variant: "RR",  total: 122, price:  500 },
+    // ===== PMT26-50 (v0.10 expansion — validated by trailing 90-day eBay sold $ volume) =====
+    // Silver Tempest — Lugia VSTAR Alt Art (top of the expanded tier by $ volume)
+    { name: "Lugia VSTAR AA",        set: "ST",  num: 211, variant: "AA",  total: 195, price: 1094 },
+    // Pokemon 151 chase cards (SIR/SAR)
+    { name: "Pikachu ex SIR 151",    set: "PMK", num: 193, variant: "SIR", total: 165, price:  899 },
+    { name: "Blastoise ex SIR",      set: "PMK", num: 200, variant: "SIR", total: 165, price:  675 },
+    { name: "Venusaur ex SIR",       set: "PMK", num: 198, variant: "SIR", total: 165, price:  500 },
+    { name: "Alakazam ex SIR",       set: "PMK", num: 201, variant: "SIR", total: 165, price:  350 },
+    { name: "Mew ex SIR",            set: "PMK", num: 205, variant: "SIR", total: 165, price:  360 },
+    // Lost Origin — Giratina VSTAR Alt Art (distinct from existing Giratina V)
+    { name: "Giratina VSTAR AA",     set: "LO",  num: 213, variant: "AA",  total: 196, price:  650 },
+    // Surging Sparks — Pikachu ex SIR
+    { name: "Pikachu ex SIR SS",     set: "SS",  num: 238, variant: "SIR", total: 252, price: 1050 },
+    // Celebrations — Pikachu V-UNION
+    { name: "Pikachu V-UNION",       set: "CEL", num:  25, variant: "UN",  total:  25, price:  290 },
+    // Crown Zenith Galarian Gallery (GG chase cards beyond Hisuian Zoroark)
+    { name: "Charizard VSTAR GG",    set: "CZ",  num:  29, variant: "GG",  total:  70, price:  275 },
+    { name: "Pikachu VMAX GG",       set: "CZ",  num:  44, variant: "GG",  total:  70, price:  160 },
+    { name: "Rayquaza VMAX GG",      set: "CZ",  num:  50, variant: "GG",  total:  70, price:   94 },
+    { name: "Zacian V GG",           set: "CZ",  num:  51, variant: "GG",  total:  70, price:  110 },
+    // Astral Radiance alt arts
+    { name: "Origin Palkia VSTAR AA",set: "AR",  num: 211, variant: "AA",  total: 189, price:  250 },
+    { name: "Origin Dialga VSTAR AA",set: "AR",  num: 209, variant: "AA",  total: 189, price:  183 },
+    { name: "Hisuian Goodra V AA",   set: "AR",  num: 205, variant: "AA",  total: 189, price:  175 },
+    // Brilliant Stars — Arceus VSTAR Alt Art
+    { name: "Arceus VSTAR AA",       set: "BS",  num: 184, variant: "AA",  total: 172, price:  175 },
+    // Stellar Crown — Lance's Charizard ex SAR
+    { name: "Lance's Charizard ex",  set: "SC",  num: 232, variant: "SAR", total: 142, price:  159 },
+    // Pokemon GO
+    { name: "Radiant Charizard",     set: "PGO", num:  11, variant: "RR",  total:  78, price:  135 },
+    { name: "Mewtwo VSTAR PGO",      set: "PGO", num:  86, variant: "AA",  total:  78, price:  124 },
+    // Paldean Fates — Penny SAR
+    { name: "Penny SAR",             set: "PaF", num:  91, variant: "SAR", total:  91, price:  125 },
+    // Twilight Masquerade — Hydreigon ex SIR
+    { name: "Hydreigon ex SIR",      set: "TM",  num: 167, variant: "SIR", total: 167, price:  126 },
+    // Paradox Rift — Mela SAR
+    { name: "Mela SAR",              set: "PR",  num: 191, variant: "SAR", total: 182, price:  120 },
+    // Paldea Evolved — Boss's Orders SAR
+    { name: "Boss's Orders SAR",     set: "PaE", num: 270, variant: "SAR", total: 193, price:   71 },
+    // Obsidian Flames — Tyranitar ex SIR
+    { name: "Tyranitar ex SIR",      set: "OF",  num: 226, variant: "SIR", total: 197, price:   70 },
   ];
   for (let idx = 0; idx < seeds.length; idx++) {
     const s = seeds[idx];

@@ -158,7 +158,7 @@ pub mod oracle {
         constituent: ConstituentInput,
     ) -> Result<()> {
         require!(!ctx.accounts.config.paused, OracleError::OraclePaused);
-        require!((idx as usize) < 25, OracleError::InvalidConfig);
+        require!((idx as usize) < CONSTITUENT_COUNT, OracleError::InvalidConfig);
 
         let mut new_c: Constituent = constituent.into();
         let mut registry = ctx.accounts.registry.load_mut()?;
@@ -196,8 +196,8 @@ pub mod oracle {
     pub fn submit_price_update(
         ctx: Context<SubmitPriceUpdate>,
         day: u32,
-        prices: [u64; 25],
-        sale_counts: [u16; 25],
+        prices: [u64; CONSTITUENT_COUNT],
+        sale_counts: [u16; CONSTITUENT_COUNT],
         source_root: [u8; 32],
     ) -> Result<()> {
         let config = &ctx.accounts.config;
@@ -268,7 +268,7 @@ pub mod oracle {
         let min_pubs = ctx.accounts.config.min_publishers_per_day as usize;
 
         // Collect submitted prices per constituent.
-        let mut prices_per: Vec<Vec<u64>> = (0..25).map(|_| Vec::new()).collect();
+        let mut prices_per: Vec<Vec<u64>> = (0..CONSTITUENT_COUNT).map(|_| Vec::new()).collect();
 
         for acc in ctx.remaining_accounts.iter() {
             // Ownership check: only price updates from this program count.
@@ -285,9 +285,9 @@ pub mod oracle {
         }
 
         // Per-constituent median (or stale if too few submissions).
-        let mut aggregated_prices = [0u64; 25];
-        let mut constituent_status = [0u8; 25];
-        for i in 0..25 {
+        let mut aggregated_prices = [0u64; CONSTITUENT_COUNT];
+        let mut constituent_status = [0u8; CONSTITUENT_COUNT];
+        for i in 0..CONSTITUENT_COUNT {
             let mut ps = std::mem::take(&mut prices_per[i]);
             if ps.len() < min_pubs {
                 constituent_status[i] = 1; // stale per methodology §6 fallback
@@ -307,15 +307,15 @@ pub mod oracle {
         // On first observation, set its base to the current price so it contributes 1.0
         // to the index (index-neutral entry per methodology §7).
         let mut registry = ctx.accounts.registry.load_mut()?;
-        for i in 0..25 {
+        for i in 0..CONSTITUENT_COUNT {
             if registry.constituents[i].base_price == 0 && aggregated_prices[i] > 0 {
                 registry.constituents[i].base_price = aggregated_prices[i];
             }
         }
 
-        // Index value: I = 1000 × (1/25) × Σ (P_t / P_base), scaled ×1e6 throughout.
+        // Index value: I = 1000 × (1/CONSTITUENT_COUNT) × Σ (P_t / P_base), scaled ×1e6 throughout.
         let mut sum_ratios: u128 = 0;
-        for i in 0..25 {
+        for i in 0..CONSTITUENT_COUNT {
             let p_t = aggregated_prices[i];
             let p_base = registry.constituents[i].base_price;
             let ratio_scaled: u128 = if p_t == 0 || p_base == 0 {
@@ -331,9 +331,12 @@ pub mod oracle {
                 .checked_add(ratio_scaled)
                 .ok_or(OracleError::InvalidConfig)?;
         }
-        // 1000 × sum / 25 = 40 × sum
+        // index = 1000 × sum / CONSTITUENT_COUNT. 1000 mod N == 0 for the supported sizes
+        // (25 → ×40, 50 → ×20), so this is exact integer division; we keep it as a
+        // div instead of a precomputed factor so the formula stays correct if N changes.
         let index_value = sum_ratios
-            .checked_mul(40)
+            .checked_mul(1000)
+            .and_then(|x| x.checked_div(CONSTITUENT_COUNT as u128))
             .ok_or(OracleError::InvalidConfig)? as u64;
 
         // Write IndexState as provisional. Challenge window (oracle.md §6) precedes finalize_day.
@@ -389,7 +392,7 @@ pub mod oracle {
         evidence_uri: String,
     ) -> Result<()> {
         require!(!ctx.accounts.config.paused, OracleError::OraclePaused);
-        require!((target_constituent as usize) < 25, OracleError::InvalidConfig);
+        require!((target_constituent as usize) < CONSTITUENT_COUNT, OracleError::InvalidConfig);
         require!(evidence_uri.len() <= 200, OracleError::InvalidConfig);
 
         // Challenge window check: state must be Provisional and within window.
@@ -539,7 +542,7 @@ pub mod oracle {
         // absolute deviation in bps and map to a slash tier — no admin
         // discretion involved.
         let constituent_idx = target_constituent as usize;
-        require!(constituent_idx < 25, OracleError::InvalidConfig);
+        require!((constituent_idx as usize) < CONSTITUENT_COUNT, OracleError::InvalidConfig);
 
         let aggregated_price =
             ctx.accounts.index_state.aggregated_prices[constituent_idx];
@@ -865,6 +868,112 @@ pub mod oracle {
         config.pending_admin = Pubkey::default();
         Ok(())
     }
+
+    /// v0.10 migration: realloc ConstituentRegistry + IndexState from the old
+    /// N=25 layout to the current N=50 layout. One-shot admin call to migrate
+    /// existing accounts on devnet/mainnet after `anchor upgrade`. The realloc
+    /// constraints on the accounts struct do the resize; slots 25..49 of the
+    /// registry and the new tail bytes of IndexState start zero-initialised.
+    /// Populate the new constituent slots via the existing chunked rebalance
+    /// flow (initialize_registry_update + update_constituent × N + finalize).
+    /// No-op for fresh deployments (initialize_registry already sizes for 50).
+    ///
+    /// We realloc both accounts manually (UncheckedAccount) because the existing
+    /// N=25 bytes can't be loaded into the N=50 structs by Anchor's normal
+    /// AccountLoader / Account deserializers before the resize takes effect.
+    pub fn expand_constituents_to_50(
+        ctx: Context<ExpandConstituentsTo50>,
+    ) -> Result<()> {
+        let admin_ai = ctx.accounts.admin.to_account_info();
+        let sys_ai = ctx.accounts.system_program.to_account_info();
+        let rent = Rent::get()?;
+
+        // ----- registry: grow to 8 + size_of::<ConstituentRegistry>() -----
+        let reg_target = 8 + std::mem::size_of::<ConstituentRegistry>();
+        let reg_ai = ctx.accounts.registry.to_account_info();
+        let reg_cur = reg_ai.data_len();
+        msg!("registry cur={} target={}", reg_cur, reg_target);
+        if reg_cur < reg_target {
+            let reg_min = rent.minimum_balance(reg_target);
+            if reg_min > reg_ai.lamports() {
+                let topup = reg_min - reg_ai.lamports();
+                msg!("registry topup={}", topup);
+                anchor_lang::system_program::transfer(
+                    CpiContext::new(
+                        sys_ai.clone(),
+                        anchor_lang::system_program::Transfer {
+                            from: admin_ai.clone(),
+                            to: reg_ai.clone(),
+                        },
+                    ),
+                    topup,
+                )?;
+            }
+            reg_ai.realloc(reg_target, true)?;
+            msg!("registry realloc'd to {}", reg_ai.data_len());
+        }
+
+        // ----- index_state: grow to 8 + IndexState::INIT_SPACE -----
+        let idx_target = 8 + IndexState::INIT_SPACE;
+        let idx_ai = ctx.accounts.index_state.to_account_info();
+        let idx_cur = idx_ai.data_len();
+        msg!("index_state cur={} target={}", idx_cur, idx_target);
+        if idx_cur < idx_target {
+            let idx_min = rent.minimum_balance(idx_target);
+            if idx_min > idx_ai.lamports() {
+                let topup = idx_min - idx_ai.lamports();
+                msg!("index_state topup={}", topup);
+                anchor_lang::system_program::transfer(
+                    CpiContext::new(
+                        sys_ai.clone(),
+                        anchor_lang::system_program::Transfer {
+                            from: admin_ai.clone(),
+                            to: idx_ai.clone(),
+                        },
+                    ),
+                    topup,
+                )?;
+            }
+            idx_ai.realloc(idx_target, true)?;
+            msg!("index_state realloc'd to {}", idx_ai.data_len());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct ExpandConstituentsTo50<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ OracleError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+
+    /// Manually realloc'd inside the handler (existing N=25 bytes can't be
+    /// loaded into the N=50 ConstituentRegistry struct by AccountLoader).
+    /// CHECK: PDA verified by seeds; admin-gated via Config.admin == admin.
+    #[account(
+        mut,
+        seeds = [CONSTITUENT_REGISTRY_SEED],
+        bump,
+    )]
+    pub registry: UncheckedAccount<'info>,
+
+    /// Manually realloc'd inside the handler (existing N=25 bytes can't be
+    /// borsh-deserialized into the N=50 IndexState struct).
+    /// CHECK: PDA verified by seeds; admin-gated via Config.admin == admin.
+    #[account(
+        mut,
+        seeds = [INDEX_STATE_SEED],
+        bump,
+    )]
+    pub index_state: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]

@@ -131,23 +131,37 @@ async function main(): Promise<void> {
       : currentDay - 1;
   console.log(`\n[2] Submit price update for day ${submissionDay} (current day ${currentDay})...`);
 
-  // 25 prices in micro-USDC. Keep these in sync with init-localnet.ts seed list
+  // 50 prices in micro-USDC. Keep these in sync with init-localnet.ts seed list
   // so post-aggregation %change against base_price reads ~0% across the board.
   const usd = (n: number) => new BN(n * 1_000_000);
   const prices: BN[] = [
+    // ===== PMT1-25 (original) =====
     usd(1450), usd(2825), usd( 574), usd( 319), usd( 400),
     usd( 250), usd(3085), usd(1593), usd( 958), usd( 229),
     usd( 394), usd( 399), usd( 494), usd( 592), usd(2761),
     usd( 655), usd(1245), usd(1781), usd( 160), usd( 200),
     usd( 800), usd( 300), usd( 200), usd( 393), usd( 500),
+    // ===== PMT26-50 (v0.10 expansion) =====
+    usd(1094), usd( 899), usd( 675), usd( 500), usd( 350),
+    usd( 360), usd( 650), usd(1050), usd( 290), usd( 275),
+    usd( 160), usd(  94), usd( 110), usd( 250), usd( 183),
+    usd( 175), usd( 175), usd( 159), usd( 135), usd( 124),
+    usd( 125), usd( 126), usd( 120), usd(  71), usd(  70),
   ];
   // Verified-tier cards get realistic sale counts; rest get a nominal 5.
   const saleCounts: number[] = [
+    // PMT1-25
     50, 50, 30, 20, 15,
     10, 50, 50, 30, 20,
     10, 30, 20, 15, 40,
     20, 25, 50, 10,  5,
     15, 10, 10,  5,  5,
+    // PMT26-50 (v0.10 expansion — nominal counts for localnet seed)
+    10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10,
   ];
 
   const sourceRoot = Array.from(Buffer.alloc(32));

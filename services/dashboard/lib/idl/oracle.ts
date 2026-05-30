@@ -301,6 +301,104 @@ export type Oracle = {
       "args": []
     },
     {
+      "name": "expandConstituentsTo50",
+      "docs": [
+        "v0.10 migration: realloc ConstituentRegistry + IndexState from the old",
+        "N=25 layout to the current N=50 layout. One-shot admin call to migrate",
+        "existing accounts on devnet/mainnet after `anchor upgrade`. The realloc",
+        "constraints on the accounts struct do the resize; slots 25..49 of the",
+        "registry and the new tail bytes of IndexState start zero-initialised.",
+        "Populate the new constituent slots via the existing chunked rebalance",
+        "flow (initialize_registry_update + update_constituent × N + finalize).",
+        "No-op for fresh deployments (initialize_registry already sizes for 50)."
+      ],
+      "discriminator": [
+        67,
+        198,
+        147,
+        239,
+        94,
+        8,
+        176,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "registry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "indexState",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  100,
+                  101,
+                  120,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "finalizeDay",
       "docs": [
         "Finalize the index after the challenge window closes.",
@@ -1384,7 +1482,7 @@ export type Oracle = {
           "type": {
             "array": [
               "u64",
-              25
+              50
             ]
           }
         },
@@ -1393,7 +1491,7 @@ export type Oracle = {
           "type": {
             "array": [
               "u16",
-              25
+              50
             ]
           }
         },
@@ -2028,7 +2126,7 @@ export type Oracle = {
                     "name": "constituent"
                   }
                 },
-                25
+                50
               ]
             }
           },
@@ -2082,7 +2180,7 @@ export type Oracle = {
             "type": {
               "array": [
                 "u64",
-                25
+                50
               ]
             }
           },
@@ -2091,7 +2189,7 @@ export type Oracle = {
             "type": {
               "array": [
                 "u8",
-                25
+                50
               ]
             }
           },
@@ -2184,7 +2282,7 @@ export type Oracle = {
             "type": {
               "array": [
                 "u64",
-                25
+                50
               ]
             }
           },
@@ -2193,7 +2291,7 @@ export type Oracle = {
             "type": {
               "array": [
                 "u16",
-                25
+                50
               ]
             }
           },
